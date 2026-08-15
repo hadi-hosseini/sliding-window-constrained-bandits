@@ -257,11 +257,6 @@ def plot_results(results):
         bbox_inches="tight",
     )
 
-    plt.savefig(
-        "imgs/ablation1.pdf",
-        bbox_inches="tight",
-    )
-
     plt.show()
 
 
