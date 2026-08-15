@@ -568,24 +568,44 @@ def plot_rare_switching_experiment(
                 ]
             )
 
-            ax.errorbar(
+            # ax.errorbar(
+            #     x,
+            #     mean,
+            #     yerr=ci,
+            #     color=POLICY_COLORS[
+            #         policy
+            #     ],
+            #     marker=POLICY_MARKERS[
+            #         policy
+            #     ],
+            #     markersize=7,
+            #     linewidth=2.1,
+            #     capsize=3,
+            #     capthick=1.0,
+            #     markeredgecolor="white",
+            #     markeredgewidth=0.7,
+            #     label=policy
+            # )
+            ax.plot(
                 x,
                 mean,
-                yerr=ci,
-                color=POLICY_COLORS[
-                    policy
-                ],
-                marker=POLICY_MARKERS[
-                    policy
-                ],
+                color=POLICY_COLORS[policy],
+                marker=POLICY_MARKERS[policy],
                 markersize=7,
                 linewidth=2.1,
-                capsize=3,
-                capthick=1.0,
                 markeredgecolor="white",
                 markeredgewidth=0.7,
                 label=policy
             )
+
+            ax.fill_between(
+                x,
+                mean - ci,
+                mean + ci,
+                color=POLICY_COLORS[policy],
+                alpha=0.35
+            )
+
 
         ax.set_title(
             title,
