@@ -1,88 +1,90 @@
 import numpy as np
 
-
-THETA_STAR = np.array(
-    [0.55, 0.60, 0.65, 0.70, 0.75, 0.80, 0.90, 1.00],
-    dtype=float,
-)
+THETA_STAR = np.array([0.55, 0.60, 0.65, 0.70, 0.75, 0.80, 0.90, 1.00], dtype=float)
 
 W = 8
 T = 16384
 RHO = 1.0
+NOISE_STD = 0.1
 LAMBDA_REG = 1.0
 DELTA = 0.05
+S_BOUND = np.linalg.norm(THETA_STAR)
+
+
+def confidence_radius(
+    V,
+    lambda_reg=LAMBDA_REG,
+    noise_scale=NOISE_STD,
+    theta_bound=S_BOUND,
+    delta=DELTA,
+):
+    d = V.shape[0]
+    sign, logdet_v = np.linalg.slogdet(V)
+
+    if sign <= 0:
+        raise ValueError("V must be positive definite")
+
+    logdet_initial = d * np.log(lambda_reg)
+    log_term = 0.5 * (logdet_v - logdet_initial) + np.log(1.0 / delta)
+
+    beta = (
+        noise_scale * np.sqrt(max(0.0, 2.0 * log_term))
+        + np.sqrt(lambda_reg) * theta_bound
+    )
+
+    return beta
 
 
 def optimistic_simplex_action(
     V,
     b,
-    lambda_reg,
-    delta,
+    lambda_reg=LAMBDA_REG,
+    noise_scale=NOISE_STD,
+    theta_bound=S_BOUND,
+    delta=DELTA,
 ):
     d = len(b)
 
     theta_hat = np.linalg.solve(V, b)
 
-    sign, logdet = np.linalg.slogdet(V)
-
-    beta = np.sqrt(
-        lambda_reg
-    ) + np.sqrt(
-        2.0 * np.log(1.0 / delta)
-        + d * np.log(
-            1.0 + np.exp(logdet / d) / lambda_reg
-        )
+    beta = confidence_radius(
+        V=V,
+        lambda_reg=lambda_reg,
+        noise_scale=noise_scale,
+        theta_bound=theta_bound,
+        delta=delta,
     )
 
-    V_inv = np.linalg.inv(V)
+    V_inv = np.linalg.solve(V, np.eye(d))
 
-    scores = np.zeros(d)
+    optimistic_values = theta_hat + beta * np.sqrt(np.diag(V_inv))
 
-    for i in range(d):
-        scores[i] = (
-            theta_hat[i]
-            + beta * np.sqrt(V_inv[i, i])
-        )
+    index = int(np.argmax(optimistic_values))
 
     z = np.zeros(d)
-    z[np.argmax(scores)] = 1.0
+    z[index] = 1.0
 
-    return z, np.argmax(scores)
+    return z, index
 
 
-def transition_path(
-    z,
-    z_next,
-    w,
-    rho,
-):
-    distance = np.linalg.norm(
-        z_next - z,
-        ord=1,
-    )
+def transition_path(z, z_next, w, rho):
+    distance = np.linalg.norm(z_next - z, ord=1)
 
     if distance <= 1e-12:
         return []
 
-    n_steps = int(
-        np.ceil(
-            (w - 1) * distance / rho
-        )
-    )
-
+    n_steps = int(np.ceil((w - 1) * distance / rho))
     n_steps = max(n_steps, 1)
 
     path = []
 
     for j in range(1, n_steps + 1):
         alpha = j / n_steps
+        action = (1.0 - alpha) * z + alpha * z_next
+        path.append(action.copy())
 
-        action = (
-            (1.0 - alpha) * z
-            + alpha * z_next
-        )
-
-        path.append(action)
+    for _ in range(w - 2):
+        path.append(z_next.copy())
 
     return path
 
@@ -91,23 +93,32 @@ def count_window_violations(
     actions,
     w,
     rho,
+    tolerance=1e-10,
 ):
     T_current = len(actions)
+
+    if T_current < w:
+        return 0
 
     violations = 0
 
     for t in range(w - 1, T_current):
+        window = actions[t - w + 1:t + 1]
 
-        window = actions[
-            t - w + 1 : t + 1
-        ]
+        adjacent_distances = np.linalg.norm(
+            window[1:] - window[:-1],
+            ord=1,
+            axis=1,
+        )
 
-        if np.any(
-            np.linalg.norm(
-                window[1:] - window[:-1],
-                axis=1,
-                ord=1,
-            ) > rho + 1e-10
+        cyclic_distance = np.linalg.norm(
+            window[-1] - window[0],
+            ord=1,
+        )
+
+        if (
+            np.max(adjacent_distances) > rho + tolerance
+            or cyclic_distance > rho + tolerance
         ):
             violations += 1
 
@@ -121,17 +132,19 @@ def run_rare_switching_oful(
     theta_star=THETA_STAR,
     w=W,
     lambda_reg=LAMBDA_REG,
+    noise_scale=NOISE_STD,
+    theta_bound=None,
     delta=DELTA,
 ):
     T_current = len(noise)
     d = len(theta_star)
 
+    if theta_bound is None:
+        theta_bound = np.linalg.norm(theta_star)
+
     V = lambda_reg * np.eye(d)
     b = np.zeros(d)
-
-    actions = np.zeros(
-        (T_current, d)
-    )
+    actions = np.zeros((T_current, d))
 
     optimal_reward = np.max(theta_star)
 
@@ -144,13 +157,17 @@ def run_rare_switching_oful(
     previous_target = None
 
     while t < T_current:
+        sign, episode_logdet = np.linalg.slogdet(V)
 
-        _, episode_logdet = np.linalg.slogdet(V)
+        if sign <= 0:
+            raise ValueError("V must be positive definite")
 
         z, _ = optimistic_simplex_action(
             V=V,
             b=b,
             lambda_reg=lambda_reg,
+            noise_scale=noise_scale,
+            theta_bound=theta_bound,
             delta=delta,
         )
 
@@ -173,34 +190,14 @@ def run_rare_switching_oful(
             )
 
             for action in path:
-
                 if t >= T_current:
                     break
 
                 actions[t] = action
 
-                reward = (
-                    np.dot(
-                        theta_star,
-                        action,
-                    )
-                    + noise[t]
-                )
-
                 pseudo_regret += (
-                    optimal_reward
-                    - np.dot(
-                        theta_star,
-                        action,
-                    )
+                    optimal_reward - np.dot(theta_star, action)
                 )
-
-                V += np.outer(
-                    action,
-                    action,
-                )
-
-                b += reward * action
 
                 transition_rounds += 1
                 t += 1
@@ -211,16 +208,14 @@ def run_rare_switching_oful(
         stationary_rounds = 0
 
         while t < T_current:
+            sign, current_logdet = np.linalg.slogdet(V)
 
-            _, current_logdet = (
-                np.linalg.slogdet(V)
-            )
+            if sign <= 0:
+                raise ValueError("V must be positive definite")
 
             determinant_condition = (
                 current_logdet
-                <= episode_logdet
-                + np.log(alpha)
-                + 1e-12
+                <= episode_logdet + np.log(alpha) + 1e-12
             )
 
             warmup_condition = (
@@ -228,37 +223,19 @@ def run_rare_switching_oful(
                 and stationary_rounds < w - 1
             )
 
-            if not (
-                determinant_condition
-                or warmup_condition
-            ):
+            if not (determinant_condition or warmup_condition):
                 break
 
             action = z
-
             actions[t] = action
 
-            reward = (
-                np.dot(
-                    theta_star,
-                    action,
-                )
-                + noise[t]
-            )
+            reward = np.dot(theta_star, action) + noise[t]
 
             pseudo_regret += (
-                optimal_reward
-                - np.dot(
-                    theta_star,
-                    action,
-                )
+                optimal_reward - np.dot(theta_star, action)
             )
 
-            V += np.outer(
-                action,
-                action,
-            )
-
+            V += np.outer(action, action)
             b += reward * action
 
             stationary_rounds += 1
@@ -274,16 +251,8 @@ def run_rare_switching_oful(
     )
 
     return {
-        "regret": float(
-            pseudo_regret
-        ),
-        "switches": int(
-            target_switches
-        ),
-        "transition_rounds": int(
-            transition_rounds
-        ),
-        "violations": int(
-            violations
-        ),
+        "regret": float(pseudo_regret),
+        "switches": int(target_switches),
+        "transition_rounds": int(transition_rounds),
+        "violations": int(violations),
     }
