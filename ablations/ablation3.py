@@ -26,125 +26,135 @@ COLORS = {
     "gray": "#8A8A8A",
 }
 
-D_VALUES = [4, 8, 16, 32]
+W_VALUES = [2, 4, 8, 16, 32]
 ALPHA = 2.0
 N_RUNS = 30
 SEED = 42
 
+NUM_BLOCKS = T // W
 
-def theta_for_dimension(d):
-    base_x = np.linspace(0.0, 1.0, len(THETA_STAR))
-    new_x = np.linspace(0.0, 1.0, d)
-
-    theta = np.interp(
-        new_x,
-        base_x,
-        THETA_STAR,
-    )
-
-    return theta
-
+def horizon_for_window(w):
+    return NUM_BLOCKS * w
 
 def mean_and_ci(values):
     values = np.asarray(values, dtype=float)
+    values = values[np.isfinite(values)]
+
+    if len(values) == 0:
+        return np.nan, np.nan
+
     mean = np.mean(values)
 
     if len(values) <= 1:
         return mean, 0.0
 
     se = np.std(values, ddof=1) / np.sqrt(len(values))
-
     return mean, 1.96 * se
 
-
-def run_dimension_ablation():
+def run_window_ablation():
     metrics = [
         "regret",
         "switches",
         "transition_rounds",
+        "transition_per_switch",
         "violations",
     ]
 
     results = {
-        d: {
+        w: {
             metric: np.zeros(N_RUNS)
             for metric in metrics
         }
-        for d in D_VALUES
+        for w in W_VALUES
     }
+
+    max_horizon = max(
+        horizon_for_window(w)
+        for w in W_VALUES
+    )
 
     for run in tqdm(
         range(N_RUNS),
-        desc="Action-dimension ablation",
+        desc="Window-length ablation",
     ):
         rng = np.random.default_rng(SEED + run)
 
-        noise = rng.normal(
+        full_noise = rng.normal(
             0.0,
             NOISE_STD,
-            T,
+            max_horizon,
         )
 
-        for d in D_VALUES:
-            theta_star = theta_for_dimension(d)
+        for w in W_VALUES:
+            horizon = horizon_for_window(w)
+            noise = full_noise[:horizon]
 
             result = run_rare_switching_oful(
                 noise=noise,
                 rho=RHO,
                 alpha=ALPHA,
-                theta_star=theta_star,
-                w=W,
+                theta_star=THETA_STAR,
+                w=w,
             )
 
-            for metric in metrics:
-                results[d][metric][run] = result[metric]
+            results[w]["regret"][run] = result["regret"]
+            results[w]["switches"][run] = result["switches"]
+            results[w]["transition_rounds"][run] = result["transition_rounds"]
+            results[w]["violations"][run] = result["violations"]
+
+            if result["switches"] > 0:
+                results[w]["transition_per_switch"][run] = (
+                    result["transition_rounds"] / result["switches"]
+                )
+            else:
+                results[w]["transition_per_switch"][run] = np.nan
 
     return results
 
-
 def print_results(results):
-    print("\nAction-dimension ablation\n")
+    print("\nWindow-length ablation\n")
 
-    for d in D_VALUES:
+    for w in W_VALUES:
+        horizon = horizon_for_window(w)
+
         regret, regret_ci = mean_and_ci(
-            results[d]["regret"]
+            results[w]["regret"]
         )
-
         switches, switches_ci = mean_and_ci(
-            results[d]["switches"]
+            results[w]["switches"]
         )
-
         transitions, transitions_ci = mean_and_ci(
-            results[d]["transition_rounds"]
+            results[w]["transition_rounds"]
         )
-
+        cost_per_switch, cost_per_switch_ci = mean_and_ci(
+            results[w]["transition_per_switch"]
+        )
         violations, violations_ci = mean_and_ci(
-            results[d]["violations"]
+            results[w]["violations"]
         )
 
         print(
-            f"d={d:2d} | "
+            f"w={w:2d} | "
+            f"T={horizon:5d} | "
             f"regret={regret:8.2f} +/- {regret_ci:6.2f} | "
             f"switches={switches:7.2f} +/- {switches_ci:5.2f} | "
             f"transitions={transitions:8.2f} +/- {transitions_ci:6.2f} | "
+            f"trans/switch={cost_per_switch:7.2f} +/- {cost_per_switch_ci:5.2f} | "
             f"violations={violations:6.2f} +/- {violations_ci:5.2f}"
         )
-
 
 def collect_plot_data(results, metric):
     means = []
     cis = []
 
-    for d in D_VALUES:
+    for w in W_VALUES:
         mean, ci = mean_and_ci(
-            results[d][metric]
+            results[w][metric]
         )
-
         means.append(mean)
         cis.append(ci)
 
     return np.asarray(means), np.asarray(cis)
-
 
 def format_axis(ax):
     ax.grid(
@@ -153,17 +163,13 @@ def format_axis(ax):
         linewidth=0.7,
         alpha=0.22,
     )
-
     ax.spines["top"].set_visible(False)
     ax.spines["right"].set_visible(False)
-
     ax.tick_params(
         axis="both",
         labelsize=10,
     )
-
     ax.set_axisbelow(True)
-
 
 def plot_metric(
     ax,
@@ -192,6 +198,7 @@ def plot_metric(
         linewidth=2.2,
         markeredgecolor="white",
         markeredgewidth=0.8,
+        zorder=3,
     )
 
     ax.set_title(
@@ -199,30 +206,25 @@ def plot_metric(
         fontsize=12,
         pad=9,
     )
-
     ax.set_xlabel(
-        "Action dimension",
+        "Window length $w$",
         fontsize=11,
     )
-
     ax.set_ylabel(
         ylabel,
         fontsize=11,
     )
-
     ax.set_xticks(x)
-
     ax.set_xticklabels(
-        [str(d) for d in D_VALUES]
+        [str(w) for w in W_VALUES]
     )
-
     ax.set_xlim(
         -0.35,
-        len(D_VALUES) - 0.65,
+        len(W_VALUES) - 0.65,
     )
 
-    y_min = np.min(means - cis)
-    y_max = np.max(means + cis)
+    y_min = np.nanmin(means - cis)
+    y_max = np.nanmax(means + cis)
     y_range = max(y_max - y_min, 1.0)
 
     ax.set_ylim(
@@ -232,29 +234,30 @@ def plot_metric(
 
     format_axis(ax)
 
-
 def plot_results(results):
-    x = np.arange(len(D_VALUES))
+    x = np.arange(len(W_VALUES))
 
     regret_means, regret_cis = collect_plot_data(
         results,
         "regret",
     )
-
     switch_means, switch_cis = collect_plot_data(
         results,
         "switches",
     )
-
     transition_means, transition_cis = collect_plot_data(
         results,
         "transition_rounds",
     )
+    cost_means, cost_cis = collect_plot_data(
+        results,
+        "transition_per_switch",
+    )
 
     fig, axes = plt.subplots(
         1,
-        3,
-        figsize=(12.5, 3.7),
+        4,
+        figsize=(15.5, 3.7),
     )
 
     plot_metric(
@@ -287,8 +290,18 @@ def plot_results(results):
         ylabel="Transition rounds",
     )
 
+    plot_metric(
+        ax=axes[3],
+        x=x,
+        means=cost_means,
+        cis=cost_cis,
+        color=COLORS["purple"],
+        title="(d) Cost per Switch",
+        ylabel="Transition rounds / switch",
+    )
+
     fig.tight_layout(
-        w_pad=2.5
+        w_pad=2.2
     )
 
     fig.savefig(
@@ -299,8 +312,7 @@ def plot_results(results):
 
     plt.show()
 
-
 if __name__ == "__main__":
-    results = run_dimension_ablation()
+    results = run_window_ablation()
     print_results(results)
     plot_results(results)
