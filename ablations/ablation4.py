@@ -14,15 +14,15 @@ from tqdm import tqdm
 os.makedirs("imgs", exist_ok=True)
 
 COLORS = {
-    "blue":   "#0072B2",
+    "blue": "#0072B2",
     "orange": "#E69F00",
-    "green":  "#009E73",
-    "red":    "#D55E00",
+    "green": "#009E73",
+    "red": "#D55E00",
     "purple": "#CC79A7",
-    "sky":    "#56B4E9",
+    "sky": "#56B4E9",
     "yellow": "#F0E442",
-    "black":  "#333333",
-    "gray":   "#8A8A8A",
+    "black": "#333333",
+    "gray": "#8A8A8A",
 }
 
 
@@ -49,7 +49,8 @@ ACTION_NAMES = [
 D = 2
 W = 4
 
-# Position-dependent sliding-window constraint:
+
+# Position-dependent non-cyclic sliding-window constraint:
 #
 # 4 c^T x_1 + 2 c^T x_2 + c^T x_3 + c^T x_4 <= 14
 #
@@ -72,7 +73,10 @@ ACTION_COSTS = (
 )
 
 
-# Unknown reward parameter
+# ============================================================
+# Reward model
+# ============================================================
+
 THETA_STAR = np.array([
     0.6,
     1.6,
@@ -87,7 +91,7 @@ TRUE_REWARDS = (
 # Experiment parameters
 # ============================================================
 
-T = 8192
+T = 1024
 
 H_VALUES = [
     1,
@@ -96,6 +100,10 @@ H_VALUES = [
     8,
     16,
     32,
+    64,
+    128,
+    256,
+    512,
 ]
 
 H_LABELS = [
@@ -105,11 +113,14 @@ H_LABELS = [
     "8",
     "16",
     "32",
+    "64",
+    "128",
+    "256",
+    "512",
     "Full",
 ]
 
 NOISE_STD = 0.1
-
 LAMBDA_REG = 1.0
 DELTA = 0.05
 
@@ -125,9 +136,7 @@ S_BOUND = np.linalg.norm(
 )
 
 REWARD_BOUND = (
-    L_BOUND
-    *
-    S_BOUND
+    L_BOUND * S_BOUND
 )
 
 N_RUNS = 30
@@ -148,6 +157,7 @@ def build_state_model():
         1,
         W
     ):
+
         states.extend(
             itertools.product(
                 range(
@@ -193,7 +203,8 @@ def build_state_model():
             n_actions
         ):
 
-            # No complete length-w window yet.
+            # Before the first complete window,
+            # every action is allowed.
             if len(state) < W - 1:
 
                 is_feasible = True
@@ -249,9 +260,8 @@ def build_state_model():
                     ]
                 )
 
-    # Used for vectorized Bellman recursion.
-    # Infeasible transitions point to an extra
-    # state whose value will be -infinity.
+    # Infeasible transitions point to an
+    # additional state with value -infinity.
     safe_next_state = (
         next_state.copy()
     )
@@ -261,18 +271,12 @@ def build_state_model():
     ] = n_states
 
     return {
-        "states":
-            states,
-        "state_to_index":
-            state_to_index,
-        "next_state":
-            next_state,
-        "safe_next_state":
-            safe_next_state,
-        "n_states":
-            n_states,
-        "empty_state":
-            state_to_index[()],
+        "states": states,
+        "state_to_index": state_to_index,
+        "next_state": next_state,
+        "safe_next_state": safe_next_state,
+        "n_states": n_states,
+        "empty_state": state_to_index[()],
     }
 
 
@@ -282,7 +286,7 @@ STATE_MODEL = (
 
 
 # ============================================================
-# Viability sets S_n
+# Viability sets
 # ============================================================
 
 def build_viability_masks():
@@ -299,7 +303,8 @@ def build_viability_masks():
         ]
     )
 
-    # S_0: every state admits a zero-step continuation.
+    # S_0: every state admits a
+    # zero-step continuation.
     masks = [
         np.ones(
             n_states,
@@ -353,7 +358,7 @@ def build_viability_masks():
             current
         )
 
-        # Viability has stabilized.
+        # Fixed point reached.
         if np.array_equal(
             current,
             previous
@@ -392,6 +397,7 @@ def viability_mask(
     if remaining < len(
         VIABILITY_MASKS
     ):
+
         return (
             VIABILITY_MASKS[
                 remaining
@@ -404,7 +410,7 @@ def viability_mask(
 
 
 # ============================================================
-# Confidence set
+# Confidence sets
 # ============================================================
 
 def confidence_radius(
@@ -422,6 +428,7 @@ def confidence_radius(
     )
 
     if sign <= 0:
+
         raise ValueError(
             "V must be positive definite."
         )
@@ -600,24 +607,18 @@ def bellman_table(
             ]
         )
 
-        best_values = (
-            np.max(
-                q_values,
-                axis=1
-            )
+        best_values = np.max(
+            q_values,
+            axis=1
         )
 
-        best_actions = (
-            np.argmax(
-                q_values,
-                axis=1
-            )
+        best_actions = np.argmax(
+            q_values,
+            axis=1
         )
 
-        viable = (
-            np.isfinite(
-                best_values
-            )
+        viable = np.isfinite(
+            best_values
         )
 
         values[
@@ -674,21 +675,23 @@ def offline_optimum(
 
 
 # ============================================================
-# H-step planning with full-horizon viability
+# Exact finite-H planner
 # ============================================================
 
-def stable_h_step_policy(
+def truncated_h_step_policy(
     stage_rewards,
     H,
+    tail_viability,
 ):
 
     """
-    Computes the H-step policy when the remaining
-    horizon is sufficiently long that all relevant
-    viability sets have stabilized.
+    Computes the H-step optimistic policy with a
+    prescribed viability set after the H-step
+    lookahead.
 
-    Every simulated action is required to remain
-    inside the stable viable set.
+    The terminal value is zero for states that
+    remain viable through the unplanned tail and
+    -infinity otherwise.
     """
 
     n_states = (
@@ -697,19 +700,17 @@ def stable_h_step_policy(
         ]
     )
 
-    next_state = (
+    safe_next_state = (
         STATE_MODEL[
-            "next_state"
+            "safe_next_state"
         ]
     )
 
-    values = np.zeros(
-        n_states
+    values = np.where(
+        tail_viability,
+        0.0,
+        -np.inf
     )
-
-    values[
-        ~STABLE_VIABILITY
-    ] = -np.inf
 
     policy = np.full(
         n_states,
@@ -721,89 +722,45 @@ def stable_h_step_policy(
         H
     ):
 
-        q_values = np.full(
-            (
-                n_states,
-                len(ACTIONS)
-            ),
-            -np.inf
+        previous = np.concatenate([
+            values,
+            np.array([
+                -np.inf
+            ])
+        ])
+
+        q_values = (
+            stage_rewards[
+                None,
+                :
+            ]
+            +
+            previous[
+                safe_next_state
+            ]
         )
 
-        for state in range(
-            n_states
-        ):
-
-            if not STABLE_VIABILITY[
-                state
-            ]:
-                continue
-
-            for action in range(
-                len(ACTIONS)
-            ):
-
-                successor = (
-                    next_state[
-                        state,
-                        action
-                    ]
-                )
-
-                if successor < 0:
-                    continue
-
-                if not STABLE_VIABILITY[
-                    successor
-                ]:
-                    continue
-
-                if not np.isfinite(
-                    values[
-                        successor
-                    ]
-                ):
-                    continue
-
-                q_values[
-                    state,
-                    action
-                ] = (
-                    stage_rewards[
-                        action
-                    ]
-                    +
-                    values[
-                        successor
-                    ]
-                )
-
-        new_values = (
-            np.max(
-                q_values,
-                axis=1
-            )
+        new_values = np.max(
+            q_values,
+            axis=1
         )
 
-        new_policy = (
-            np.argmax(
-                q_values,
-                axis=1
-            )
+        best_actions = np.argmax(
+            q_values,
+            axis=1
         )
 
-        feasible_states = (
-            np.isfinite(
-                new_values
-            )
+        viable = np.isfinite(
+            new_values
         )
 
         policy[:] = -1
 
         policy[
-            feasible_states
+            viable
         ] = (
-            new_policy[
-                feasible_states
+            best_actions[
+                viable
             ]
         )
 
@@ -814,6 +771,25 @@ def stable_h_step_policy(
     return policy
 
 
+def stable_h_step_policy(
+    stage_rewards,
+    H,
+):
+
+    """
+    H-step policy when the remaining-horizon
+    viability set has reached its fixed point.
+    """
+
+    return (
+        truncated_h_step_policy(
+            stage_rewards=stage_rewards,
+            H=H,
+            tail_viability=STABLE_VIABILITY
+        )
+    )
+
+
 def exact_truncated_action(
     stage_rewards,
     state,
@@ -822,154 +798,47 @@ def exact_truncated_action(
 ):
 
     """
-    Exact H-step reward lookahead while imposing
-    viability over the full remaining horizon.
+    Exact finite-H reward lookahead while imposing
+    viability over the entire remaining horizon.
 
-    At depth j, a successor must still admit a
-    feasible continuation for all remaining rounds.
+    This implementation is iterative and therefore
+    has no recursion-depth limitation.
     """
-
-    next_state = (
-        STATE_MODEL[
-            "next_state"
-        ]
-    )
 
     depth = min(
         H,
         remaining
     )
 
-    @lru_cache(maxsize=None)
-    def value(
-        current_state,
-        current_depth,
-        current_remaining,
-    ):
+    tail_remaining = (
+        remaining
+        -
+        depth
+    )
 
-        if (
-            current_depth == 0
-            or
-            current_remaining == 0
-        ):
-            return 0.0
-
-        best = -np.inf
-
-        successor_viability = (
-            viability_mask(
-                current_remaining - 1
-            )
-        )
-
-        for action in range(
-            len(ACTIONS)
-        ):
-
-            successor = (
-                next_state[
-                    current_state,
-                    action
-                ]
-            )
-
-            if successor < 0:
-                continue
-
-            # Full remaining-horizon viability.
-            if not successor_viability[
-                successor
-            ]:
-                continue
-
-            continuation = value(
-                successor,
-                current_depth - 1,
-                current_remaining - 1,
-            )
-
-            if not np.isfinite(
-                continuation
-            ):
-                continue
-
-            candidate = (
-                stage_rewards[
-                    action
-                ]
-                +
-                continuation
-            )
-
-            if candidate > best:
-                best = candidate
-
-        return best
-
-    best_action = -1
-    best_value = -np.inf
-
-    successor_viability = (
+    tail_viability = (
         viability_mask(
-            remaining - 1
+            tail_remaining
         )
     )
 
-    for action in range(
-        len(ACTIONS)
-    ):
-
-        successor = (
-            next_state[
-                state,
-                action
-            ]
+    policy = (
+        truncated_h_step_policy(
+            stage_rewards=stage_rewards,
+            H=depth,
+            tail_viability=tail_viability
         )
-
-        if successor < 0:
-            continue
-
-        if not successor_viability[
-            successor
-        ]:
-            continue
-
-        continuation = value(
-            successor,
-            depth - 1,
-            remaining - 1,
-        )
-
-        if not np.isfinite(
-            continuation
-        ):
-            continue
-
-        candidate = (
-            stage_rewards[
-                action
-            ]
-            +
-            continuation
-        )
-
-        if candidate > best_value:
-
-            best_value = (
-                candidate
-            )
-
-            best_action = (
-                action
-            )
+    )
 
     return int(
-        best_action
+        policy[
+            state
+        ]
     )
 
 
 # ============================================================
-# Constraint check
+# Constraint checks
 # ============================================================
 
 def count_window_violations(
@@ -980,6 +849,7 @@ def count_window_violations(
     if len(
         action_indices
     ) < W:
+
         return 0
 
     violations = 0
@@ -1005,11 +875,9 @@ def count_window_violations(
             for action in window
         ])
 
-        weighted_cost = (
-            np.dot(
-                POSITION_WEIGHTS,
-                costs
-            )
+        weighted_cost = np.dot(
+            POSITION_WEIGHTS,
+            costs
         )
 
         if (
@@ -1017,6 +885,7 @@ def count_window_violations(
             >
             BUDGET + tolerance
         ):
+
             violations += 1
 
     return int(
@@ -1040,228 +909,6 @@ def assert_feasible(
             f"Generated trajectory contains "
             f"{violations} sliding-window violations."
         )
-
-
-# ============================================================
-# Rare-update H-step optimistic planner
-# ============================================================
-
-def run_h_step_planner(
-    noise,
-    H,
-):
-
-    horizon = len(
-        noise
-    )
-
-    V = (
-        LAMBDA_REG
-        *
-        np.eye(D)
-    )
-
-    b = np.zeros(
-        D
-    )
-
-    state = (
-        STATE_MODEL[
-            "empty_state"
-        ]
-    )
-
-    next_state = (
-        STATE_MODEL[
-            "next_state"
-        ]
-    )
-
-    action_indices = []
-
-    total_true_reward = 0.0
-
-    t = 0
-    n_updates = 0
-
-    while t < horizon:
-
-        # Freeze statistics at episode start.
-        _, episode_logdet = (
-            np.linalg.slogdet(V)
-        )
-
-        optimistic = (
-            optimistic_rewards(
-                V=V,
-                b=b
-            )
-        )
-
-        # For sufficiently long remaining horizons,
-        # the viability sets are stable and this
-        # policy can be reused throughout the episode.
-        stable_policy = (
-            stable_h_step_policy(
-                stage_rewards=optimistic,
-                H=H
-            )
-        )
-
-        n_updates += 1
-
-        while t < horizon:
-
-            _, current_logdet = (
-                np.linalg.slogdet(V)
-            )
-
-            # Determinant-doubling update rule.
-            if (
-                current_logdet
-                >
-                episode_logdet
-                +
-                np.log(2.0)
-                +
-                1e-12
-            ):
-                break
-
-            remaining = (
-                horizon - t
-            )
-
-            # If all viability sets appearing in the
-            # H-step lookahead have stabilized, use
-            # the precomputed policy.
-            if (
-                remaining
-                >=
-                H + STABLE_FROM
-            ):
-
-                action_index = int(
-                    stable_policy[
-                        state
-                    ]
-                )
-
-            else:
-
-                # Near the end of the horizon,
-                # account exactly for the changing
-                # viability sets.
-                action_index = (
-                    exact_truncated_action(
-                        stage_rewards=optimistic,
-                        state=state,
-                        H=H,
-                        remaining=remaining,
-                    )
-                )
-
-            if action_index < 0:
-
-                raise RuntimeError(
-                    f"No viable H-step action at "
-                    f"t={t}, H={H}, "
-                    f"state="
-                    f"{STATE_MODEL['states'][state]}."
-                )
-
-            successor = (
-                next_state[
-                    state,
-                    action_index
-                ]
-            )
-
-            if successor < 0:
-
-                raise RuntimeError(
-                    "Planner selected an infeasible action."
-                )
-
-            action = (
-                ACTIONS[
-                    action_index
-                ]
-            )
-
-            action_indices.append(
-                action_index
-            )
-
-            true_reward = (
-                THETA_STAR
-                @ action
-            )
-
-            observation = (
-                true_reward
-                +
-                noise[
-                    t
-                ]
-            )
-
-            total_true_reward += (
-                true_reward
-            )
-
-            V += np.outer(
-                action,
-                action
-            )
-
-            b += (
-                action
-                *
-                observation
-            )
-
-            state = (
-                successor
-            )
-
-            t += 1
-
-    # Exact feasibility check.
-    assert_feasible(
-        action_indices
-    )
-
-    benchmark = (
-        offline_optimum(
-            horizon
-        )
-    )
-
-    regret = (
-        benchmark
-        -
-        total_true_reward
-    )
-
-    # Numerical protection only.
-    if (
-        regret < 0
-        and
-        abs(regret) < 1e-8
-    ):
-        regret = 0.0
-
-    return {
-        "normalized_regret":
-            float(
-                regret / horizon
-            ),
-        "updates":
-            int(
-                n_updates
-            ),
-    }
 
 
 # ============================================================
@@ -1307,7 +954,7 @@ def run_full_planner(
 
     while t < horizon:
 
-        # Freeze statistics.
+        # Freeze statistical model.
         _, episode_logdet = (
             np.linalg.slogdet(V)
         )
@@ -1323,7 +970,7 @@ def run_full_planner(
             horizon - t
         )
 
-        # Exact remaining-horizon Bellman plan.
+        # Exact optimistic remaining-horizon plan.
         _, policy = (
             bellman_table(
                 stage_rewards=optimistic,
@@ -1339,6 +986,7 @@ def run_full_planner(
                 np.linalg.slogdet(V)
             )
 
+            # Determinant-doubling update rule.
             if (
                 current_logdet
                 >
@@ -1348,6 +996,7 @@ def run_full_planner(
                 +
                 1e-12
             ):
+
                 break
 
             remaining = (
@@ -1364,8 +1013,8 @@ def run_full_planner(
             if action_index < 0:
 
                 raise RuntimeError(
-                    f"Full planner reached "
-                    f"a non-viable state at t={t}."
+                    f"Full planner reached a "
+                    f"non-viable state at t={t}."
                 )
 
             successor = (
@@ -1447,6 +1096,238 @@ def run_full_planner(
         and
         abs(regret) < 1e-8
     ):
+
+        regret = 0.0
+
+    return {
+        "normalized_regret":
+            float(
+                regret / horizon
+            ),
+        "updates":
+            int(
+                n_updates
+            ),
+    }
+
+
+# ============================================================
+# Rare-update H-step optimistic planner
+# ============================================================
+
+def run_h_step_planner(
+    noise,
+    H,
+):
+
+    horizon = len(
+        noise
+    )
+
+    if H >= horizon:
+
+        return (
+            run_full_planner(
+                noise=noise
+            )
+        )
+
+    V = (
+        LAMBDA_REG
+        *
+        np.eye(D)
+    )
+
+    b = np.zeros(
+        D
+    )
+
+    state = (
+        STATE_MODEL[
+            "empty_state"
+        ]
+    )
+
+    next_state = (
+        STATE_MODEL[
+            "next_state"
+        ]
+    )
+
+    action_indices = []
+
+    total_true_reward = 0.0
+
+    t = 0
+    n_updates = 0
+
+    while t < horizon:
+
+        # Freeze statistical model at episode start.
+        _, episode_logdet = (
+            np.linalg.slogdet(V)
+        )
+
+        optimistic = (
+            optimistic_rewards(
+                V=V,
+                b=b
+            )
+        )
+
+        # Away from the terminal boundary, the
+        # viability set has stabilized, so this
+        # policy can be reused throughout the episode.
+        stable_policy = (
+            stable_h_step_policy(
+                stage_rewards=optimistic,
+                H=H
+            )
+        )
+
+        n_updates += 1
+
+        while t < horizon:
+
+            _, current_logdet = (
+                np.linalg.slogdet(V)
+            )
+
+            # Determinant-doubling update rule.
+            if (
+                current_logdet
+                >
+                episode_logdet
+                +
+                np.log(2.0)
+                +
+                1e-12
+            ):
+
+                break
+
+            remaining = (
+                horizon - t
+            )
+
+            # If the unplanned tail is already in
+            # the stable viability regime, use the
+            # precomputed H-step policy.
+            if (
+                remaining - H
+                >=
+                STABLE_FROM
+            ):
+
+                action_index = int(
+                    stable_policy[
+                        state
+                    ]
+                )
+
+            else:
+
+                # Near the terminal boundary, use
+                # the exact finite-H policy with
+                # full remaining-horizon viability.
+                action_index = (
+                    exact_truncated_action(
+                        stage_rewards=optimistic,
+                        state=state,
+                        H=H,
+                        remaining=remaining
+                    )
+                )
+
+            if action_index < 0:
+
+                raise RuntimeError(
+                    f"No viable action at "
+                    f"t={t}, H={H}, "
+                    f"state="
+                    f"{STATE_MODEL['states'][state]}."
+                )
+
+            successor = (
+                next_state[
+                    state,
+                    action_index
+                ]
+            )
+
+            if successor < 0:
+
+                raise RuntimeError(
+                    "H-step planner selected "
+                    "an infeasible action."
+                )
+
+            action = (
+                ACTIONS[
+                    action_index
+                ]
+            )
+
+            action_indices.append(
+                action_index
+            )
+
+            true_reward = (
+                THETA_STAR
+                @ action
+            )
+
+            observation = (
+                true_reward
+                +
+                noise[
+                    t
+                ]
+            )
+
+            total_true_reward += (
+                true_reward
+            )
+
+            V += np.outer(
+                action,
+                action
+            )
+
+            b += (
+                action
+                *
+                observation
+            )
+
+            state = (
+                successor
+            )
+
+            t += 1
+
+    assert_feasible(
+        action_indices
+    )
+
+    benchmark = (
+        offline_optimum(
+            horizon
+        )
+    )
+
+    regret = (
+        benchmark
+        -
+        total_true_reward
+    )
+
+    if (
+        regret < 0
+        and
+        abs(regret) < 1e-8
+    ):
+
         regret = 0.0
 
     return {
@@ -1472,7 +1353,7 @@ def print_problem_summary():
     )
 
     print(
-        "-" * 70
+        "-" * 75
     )
 
     print(
@@ -1557,8 +1438,8 @@ def run_planning_horizon_ablation(
             )
         )
 
-        # Same noise realization for every
-        # planning horizon within a run.
+        # Shared noise across all H values
+        # within each run.
         noise = (
             rng.normal(
                 loc=0.0,
@@ -1600,7 +1481,7 @@ def run_planning_horizon_ablation(
                 ]
             )
 
-        # Full remaining-horizon planner.
+        # Exact remaining-horizon planner.
         full_result = (
             run_full_planner(
                 noise=noise
@@ -1640,19 +1521,15 @@ def mean_and_ci(
     values
 ):
 
-    mean = (
-        np.mean(
-            values,
-            axis=1
-        )
+    mean = np.mean(
+        values,
+        axis=1
     )
 
     if values.shape[1] == 1:
 
-        ci = (
-            np.zeros_like(
-                mean
-            )
+        ci = np.zeros_like(
+            mean
         )
 
     else:
@@ -1706,7 +1583,7 @@ def print_results(
     )
 
     print(
-        "-" * 85
+        "-" * 90
     )
 
     for index, label in enumerate(
@@ -1757,7 +1634,7 @@ def plot_planning_horizon_ablation(
     fig, axes = plt.subplots(
         1,
         2,
-        figsize=(14, 5.2)
+        figsize=(14.5, 5.2)
     )
 
 
@@ -1775,12 +1652,16 @@ def plot_planning_horizon_ablation(
         markersize=7,
         linewidth=2.2,
         markeredgecolor="white",
-        markeredgewidth=0.7
+        markeredgewidth=0.7,
+        zorder=3
     )
 
     ax1.fill_between(
         x,
-        regret_mean - regret_ci,
+        np.maximum(
+            regret_mean - regret_ci,
+            0.0
+        ),
         regret_mean + regret_ci,
         color=COLORS["blue"],
         alpha=0.30
@@ -1807,11 +1688,12 @@ def plot_planning_horizon_ablation(
     )
 
     ax1.set_xticklabels(
-        H_LABELS
+        H_LABELS,
+        fontsize=9
     )
 
     ax1.tick_params(
-        axis="both",
+        axis="y",
         labelsize=11
     )
 
@@ -1828,14 +1710,6 @@ def plot_planning_horizon_ablation(
     ax1.spines[
         "right"
     ].set_visible(False)
-
-    ax1.spines[
-        "left"
-    ].set_linewidth(0.8)
-
-    ax1.spines[
-        "bottom"
-    ].set_linewidth(0.8)
 
     ax1.set_ylim(
         bottom=0
@@ -1856,12 +1730,16 @@ def plot_planning_horizon_ablation(
         markersize=7,
         linewidth=2.2,
         markeredgecolor="white",
-        markeredgewidth=0.7
+        markeredgewidth=0.7,
+        zorder=3
     )
 
     ax2.fill_between(
         x,
-        update_mean - update_ci,
+        np.maximum(
+            update_mean - update_ci,
+            0.0
+        ),
         update_mean + update_ci,
         color=COLORS["orange"],
         alpha=0.30
@@ -1888,11 +1766,12 @@ def plot_planning_horizon_ablation(
     )
 
     ax2.set_xticklabels(
-        H_LABELS
+        H_LABELS,
+        fontsize=9
     )
 
     ax2.tick_params(
-        axis="both",
+        axis="y",
         labelsize=11
     )
 
@@ -1909,14 +1788,6 @@ def plot_planning_horizon_ablation(
     ax2.spines[
         "right"
     ].set_visible(False)
-
-    ax2.spines[
-        "left"
-    ].set_linewidth(0.8)
-
-    ax2.spines[
-        "bottom"
-    ].set_linewidth(0.8)
 
     ax2.set_ylim(
         bottom=0
