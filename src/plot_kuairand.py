@@ -326,29 +326,11 @@ draw_panel(
 )
 
 
-# ============================================================
-# FINAL LAYOUT
-# ============================================================
-
-fig.tight_layout(
-    w_pad=2.5
-)
+fig.tight_layout(w_pad=2.5)
+png_file = (FIGURE_DIR / "kuairand_comparison.png")
 
 
-# ============================================================
-# SAVE
-# ============================================================
-
-png_file = (
-    FIGURE_DIR
-    / "kuairand_comparison.png"
-)
-
-
-fig.savefig(
-    png_file,
-    bbox_inches="tight",
-)
+fig.savefig(png_file, bbox_inches="tight")
 
 print("Saved:", png_file)
 plt.show()
