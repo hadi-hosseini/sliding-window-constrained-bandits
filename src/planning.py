@@ -6,11 +6,6 @@ import numpy as np
 import matplotlib.pyplot as plt
 from tqdm import tqdm
 
-
-# ============================================================
-# Setup
-# ============================================================
-
 os.makedirs("imgs", exist_ok=True)
 
 COLORS = {
@@ -26,117 +21,40 @@ COLORS = {
 }
 
 
-# ============================================================
-# Problem instance
-# ============================================================
-
-# Actions:
-# 0  = (0,0)
-# e1 = (1,0)
-# e2 = (0,1)
 ACTIONS = np.array([
     [0.0, 0.0],
     [1.0, 0.0],
     [0.0, 1.0],
 ])
 
-ACTION_NAMES = [
-    "0",
-    "e1",
-    "e2",
-]
-
+ACTION_NAMES = ["0", "e1", "e2"]
 D = 2
 W = 4
 
-
-# Position-dependent non-cyclic sliding-window constraint:
-#
-# 4 c^T x_1 + 2 c^T x_2 + c^T x_3 + c^T x_4 <= B
-#
-COST_VECTOR = np.array([
-    1.0,
-    3.0,
-])
-
-POSITION_WEIGHTS = np.array([
-    4.0,
-    2.0,
-    1.0,
-    1.0,
-])
-
+COST_VECTOR = np.array([1.0, 3.0,])
+POSITION_WEIGHTS = np.array([4.0, 2.0, 1.0, 1.0,])
 BUDGET = 14.0
+ACTION_COSTS = (ACTIONS @ COST_VECTOR)
+THETA_STAR = np.array([0.6, 1.6,])
+TRUE_REWARDS = (ACTIONS @ THETA_STAR)
+T_VALUES = np.array([512, 1024, 2048, 4096, 8192,])
 
-ACTION_COSTS = (
-    ACTIONS @ COST_VECTOR
-)
-
-
-# Unknown linear reward parameter
-THETA_STAR = np.array([
-    0.6,
-    1.6,
-])
-
-TRUE_REWARDS = (
-    ACTIONS @ THETA_STAR
-)
-
-
-# Horizons
-T_VALUES = np.array([
-    512,
-    1024,
-    2048,
-    4096,
-    8192,
-])
-
-
-# Statistical parameters
 NOISE_STD = 0.1
 LAMBDA_REG = 1.0
 DELTA = 0.05
-
-L_BOUND = np.max(
-    np.linalg.norm(
-        ACTIONS,
-        axis=1
-    )
-)
-
-S_BOUND = np.linalg.norm(
-    THETA_STAR
-)
-
-REWARD_BOUND = (
-    L_BOUND * S_BOUND
-)
-
-
-# Experiment parameters
+L_BOUND = np.max(np.linalg.norm(ACTIONS, axis=1))
+S_BOUND = np.linalg.norm(THETA_STAR)
+REWARD_BOUND = (L_BOUND * S_BOUND)
 N_RUNS = 30
 BASE_SEED = 2026
 
-
-POLICY_NAMES = [
-    "Rare-update optimistic planning",
-    "Myopic feasible OFUL",
-    "Stationary OFUL",
-]
-
+POLICY_NAMES = ["Rare-update optimistic planning", "Myopic feasible OFUL", "Stationary OFUL"]
 
 POLICY_COLORS = {
-    "Rare-update optimistic planning":
-        COLORS["blue"],
-    "Myopic feasible OFUL":
-        COLORS["orange"],
-    "Stationary OFUL":
-        COLORS["green"],
+    "Rare-update optimistic planning": COLORS["blue"],
+    "Myopic feasible OFUL": COLORS["orange"],
+    "Stationary OFUL": COLORS["green"],
 }
-
-
 POLICY_MARKERS = {
     "Rare-update optimistic planning": "o",
     "Myopic feasible OFUL": "s",
@@ -144,29 +62,13 @@ POLICY_MARKERS = {
 }
 
 
-# ============================================================
-# History-state model
-# ============================================================
 
 def build_state_model():
-
     states = [()]
+    for length in range(1, W):
+        states.extend(itertools.product(range(len(ACTIONS)), repeat=length))
 
-    for length in range(
-        1,
-        W
-    ):
-        states.extend(
-            itertools.product(
-                range(
-                    len(ACTIONS)
-                ),
-                repeat=length
-            )
-        )
-
-    states = [
-        tuple(state)
+    states = [tuple(state)
         for state in states
     ]
 
@@ -1449,88 +1351,23 @@ def mean_and_ci(
     )
 
 
-def print_experiment_summary(
-    results
-):
+def print_experiment_summary(results):
 
-    for horizon_index, T in enumerate(
-        T_VALUES
-    ):
-
-        print(
-            f"\nT = {T}"
-        )
-
-        print(
-            "-" * 85
-        )
+    for horizon_index, T in enumerate(T_VALUES):
+        print(f"\nT = {T}")
+        print("-" * 85)
 
         for policy in POLICY_NAMES:
+            regret_data = (results[policy]["normalized_regret"][horizon_index])
+            update_data = (results[policy]["updates"][horizon_index])
+            regret_mean = np.mean(regret_data)
+            update_mean = np.mean(update_data)
 
-            regret_data = (
-                results[
-                    policy
-                ][
-                    "normalized_regret"
-                ][
-                    horizon_index
-                ]
-            )
-
-            update_data = (
-                results[
-                    policy
-                ][
-                    "updates"
-                ][
-                    horizon_index
-                ]
-            )
-
-            regret_mean = np.mean(
-                regret_data
-            )
-
-            update_mean = np.mean(
-                update_data
-            )
-
-            if len(
-                regret_data
-            ) > 1:
-
-                regret_ci = (
-                    1.96
-                    *
-                    np.std(
-                        regret_data,
-                        ddof=1
-                    )
-                    /
-                    np.sqrt(
-                        len(
-                            regret_data
-                        )
-                    )
-                )
-
-                update_ci = (
-                    1.96
-                    *
-                    np.std(
-                        update_data,
-                        ddof=1
-                    )
-                    /
-                    np.sqrt(
-                        len(
-                            update_data
-                        )
-                    )
-                )
+            if len(regret_data) > 1:
+                regret_ci = (1.96 * np.std(regret_data, ddof=1) / np.sqrt(len(regret_data)))
+                update_ci = (1.96 * np.std(update_data, ddof=1) / np.sqrt(len(update_data)))
 
             else:
-
                 regret_ci = 0.0
                 update_ci = 0.0
 
@@ -1545,10 +1382,6 @@ def print_experiment_summary(
             )
 
 
-# ============================================================
-# Plot experiment
-# ============================================================
-
 def plot_planning_experiment(
     results
 ):
@@ -1558,10 +1391,6 @@ def plot_planning_experiment(
         2,
         figsize=(14, 5.2)
     )
-
-    # --------------------------------------------------------
-    # Left: normalized pseudo-regret
-    # --------------------------------------------------------
 
     ax1 = axes[0]
 
@@ -1663,11 +1492,6 @@ def plot_planning_experiment(
     ax1.set_ylim(
         bottom=0
     )
-
-
-    # --------------------------------------------------------
-    # Right: policy updates
-    # --------------------------------------------------------
 
     ax2 = axes[1]
 
@@ -1771,10 +1595,6 @@ def plot_planning_experiment(
     )
 
 
-    # --------------------------------------------------------
-    # Shared legend
-    # --------------------------------------------------------
-
     handles, labels = (
         ax1.get_legend_handles_labels()
     )
@@ -1811,25 +1631,8 @@ def plot_planning_experiment(
     plt.show()
 
 
-# ============================================================
-# Main
-# ============================================================
-
 if __name__ == "__main__":
-
     print_problem_summary()
-
-    results = (
-        run_planning_experiment(
-            n_runs=N_RUNS,
-            seed=BASE_SEED
-        )
-    )
-
-    print_experiment_summary(
-        results
-    )
-
-    plot_planning_experiment(
-        results
-    )
+    results = (run_planning_experiment(n_runs=N_RUNS, seed=BASE_SEED))
+    print_experiment_summary(results)
+    plot_planning_experiment(results)
