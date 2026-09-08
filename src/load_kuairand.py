@@ -4,8 +4,8 @@ import numpy as np
 import duckdb
 
 
-DATA_DIR = Path("/home/hadi/CRLT/dataset/KuaiRand-1K/data")
-CATEGORY_FILE = Path("/home/hadi/CRLT/dataset/KuaiRand-1K/kuairand_video_categories.csv")
+DATA_DIR = Path("./dataset/KuaiRand-1K/data")
+CATEGORY_FILE = Path("./dataset/KuaiRand-1K/kuairand_video_categories.csv")
 OUTPUT_DIR = Path("./kuairand_processed")
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 K = 8
