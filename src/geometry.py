@@ -3,7 +3,6 @@ import cvxpy as cp
 import numpy as np
 import matplotlib.pyplot as plt
 
-
 os.makedirs("imgs", exist_ok=True)
 
 
@@ -302,4 +301,3 @@ if __name__ == "__main__":
 
     results = run_geometry_experiment()
     plot_geometry_experiment(results, w=32)
-    # plot_optimal_trajectory(w=8, r=4)
