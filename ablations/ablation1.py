@@ -3,14 +3,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from tqdm import tqdm
 
-from rare_switching import (
-    THETA_STAR,
-    W,
-    T,
-    RHO,
-    NOISE_STD,
-    run_rare_switching_oful,
-)
+from rare_switching import (THETA_STAR, W, T, RHO, NOISE_STD, run_rare_switching_oful)
 
 os.makedirs("imgs", exist_ok=True)
 
@@ -43,36 +36,15 @@ def mean_and_ci(values):
 
 
 def run_switching_threshold_ablation():
-    metrics = [
-        "regret",
-        "switches",
-        "transition_rounds",
-        "violations",
-    ]
+    metrics = ["regret", "switches", "transition_rounds", "violations"]
+    results = {alpha: {metric: np.zeros(N_RUNS) for metric in metrics} for alpha in ALPHA_VALUES}
 
-    results = {
-        alpha: {
-            metric: np.zeros(N_RUNS)
-            for metric in metrics
-        }
-        for alpha in ALPHA_VALUES
-    }
-
-    for run in tqdm(
-        range(N_RUNS),
-        desc="Switching-threshold ablation",
-    ):
+    for run in tqdm(range(N_RUNS), desc="Switching-threshold ablation"):
         rng = np.random.default_rng(SEED + run)
         noise = rng.normal(0.0, NOISE_STD, T)
 
         for alpha in ALPHA_VALUES:
-            result = run_rare_switching_oful(
-                noise=noise,
-                rho=RHO,
-                alpha=alpha,
-                theta_star=THETA_STAR,
-                w=W,
-            )
+            result = run_rare_switching_oful(noise=noise, rho=RHO, alpha=alpha, theta_star=THETA_STAR, w=W)
 
             for metric in metrics:
                 results[alpha][metric][run] = result[metric]
@@ -84,21 +56,10 @@ def print_results(results):
     print("\nSwitching-threshold ablation\n")
 
     for alpha in ALPHA_VALUES:
-        regret, regret_ci = mean_and_ci(
-            results[alpha]["regret"]
-        )
-
-        switches, switches_ci = mean_and_ci(
-            results[alpha]["switches"]
-        )
-
-        transitions, transitions_ci = mean_and_ci(
-            results[alpha]["transition_rounds"]
-        )
-
-        violations, violations_ci = mean_and_ci(
-            results[alpha]["violations"]
-        )
+        regret, regret_ci = mean_and_ci(results[alpha]["regret"])
+        switches, switches_ci = mean_and_ci(results[alpha]["switches"])
+        transitions, transitions_ci = mean_and_ci(results[alpha]["transition_rounds"])
+        violations, violations_ci = mean_and_ci(results[alpha]["violations"])
 
         print(
             f"alpha={alpha:>4.2f} | "
@@ -114,16 +75,11 @@ def collect_plot_data(results, metric):
     cis = []
 
     for alpha in ALPHA_VALUES:
-        mean, ci = mean_and_ci(
-            results[alpha][metric]
-        )
+        mean, ci = mean_and_ci(results[alpha][metric])
         means.append(mean)
         cis.append(ci)
 
-    return (
-        np.asarray(means),
-        np.asarray(cis),
-    )
+    return (np.asarray(means), np.asarray(cis))
 
 
 def format_axis(ax):
