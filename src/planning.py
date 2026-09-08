@@ -306,217 +306,82 @@ def run_rare_update_planning(noise):
 
         while t < T:
             _, current_logdet = (np.linalg.slogdet(V))
-
-            if (current_logdet > episode_logdet + np.log(2.0)
-                +
-                1e-12
-            ):
+            if (current_logdet > episode_logdet + np.log(2.0) + 1e-12):
                 break
 
-            remaining = (
-                T - t
-            )
-
-            action_index = int(
-                policy[
-                    remaining,
-                    state
-                ]
-            )
+            remaining = (T - t)
+            action_index = int(policy[remaining, state])
 
             if action_index < 0:
                 raise RuntimeError(
                     "Planner reached a non-viable state."
                 )
 
-            selected_next_state = (
-                next_state[
-                    state,
-                    action_index
-                ]
-            )
+            selected_next_state = (next_state[state, action_index])
 
             if selected_next_state < 0:
                 raise RuntimeError(
                     "Planner selected an infeasible action."
                 )
 
-            action = (
-                ACTIONS[
-                    action_index
-                ]
-            )
-
-            action_indices.append(
-                action_index
-            )
-
-            true_reward = (
-                THETA_STAR
-                @ action
-            )
-
-            observation = (
-                true_reward
-                +
-                noise[t]
-            )
-
-            total_true_reward += (
-                true_reward
-            )
-
-            V += np.outer(
-                action,
-                action
-            )
-
-            b += (
-                action
-                *
-                observation
-            )
-
-            state = (
-                selected_next_state
-            )
-
+            action = (ACTIONS[action_index])
+            action_indices.append(action_index)
+            true_reward = (THETA_STAR @ action)
+            observation = (true_reward + noise[t])
+            total_true_reward += (true_reward)
+            V += np.outer(action, action)
+            b += (action * observation)
+            state = (selected_next_state)
             t += 1
 
-    assert_feasible(
-        action_indices
-    )
-
-    offline_value = (
-        offline_optimum(T)
-    )
-
-    regret = (
-        offline_value
-        -
-        total_true_reward
-    )
+    assert_feasible(action_indices)
+    offline_value = (offline_optimum(T))
+    regret = (offline_value - total_true_reward)
 
     return {
-        "regret":
-            float(regret),
-        "normalized_regret":
-            float(regret / T),
-        "updates":
-            int(n_updates),
+        "regret": float(regret),
+        "normalized_regret": float(regret / T),
+        "updates": int(n_updates),
     }
 
 
 
-def run_myopic_feasible_oful(
-    noise,
-):
-
-    T = len(
-        noise
-    )
-
-    V = (
-        LAMBDA_REG
-        *
-        np.eye(D)
-    )
-
-    b = np.zeros(
-        D
-    )
-
-    state = (
-        STATE_MODEL[
-            "empty_state"
-        ]
-    )
-
-    next_state = (
-        STATE_MODEL[
-            "next_state"
-        ]
-    )
-
-    viability = (
-        viability_values(T)
-    )
-
+def run_myopic_feasible_oful(noise):
+    T = len(noise)
+    V = (LAMBDA_REG * np.eye(D))
+    b = np.zeros(D)
+    state = (STATE_MODEL["empty_state"])
+    next_state = (STATE_MODEL["next_state"])
+    viability = (viability_values(T))
     action_indices = []
-
     total_true_reward = 0.0
-
     t = 0
     n_updates = 0
 
     while t < T:
-
-        # Same update schedule as the planner.
-        _, episode_logdet = (
-            np.linalg.slogdet(V)
-        )
-
-        optimistic = (
-            optimistic_rewards(
-                V=V,
-                b=b
-            )
-        )
-
+        _, episode_logdet = (np.linalg.slogdet(V))
+        optimistic = (optimistic_rewards(V=V, b=b))
         n_updates += 1
 
         while t < T:
+            _, current_logdet = (np.linalg.slogdet(V))
 
-            _, current_logdet = (
-                np.linalg.slogdet(V)
-            )
-
-            if (
-                current_logdet
-                >
-                episode_logdet
-                +
-                np.log(2.0)
-                +
-                1e-12
-            ):
+            if (current_logdet > episode_logdet + np.log(2.0) + 1e-12):
                 break
 
-            remaining = (
-                T - t
-            )
-
+            remaining = (T - t)
             candidates = []
 
-            for action_index in range(
-                len(ACTIONS)
-            ):
+            for action_index in range(len(ACTIONS)):
+                candidate_state = (next_state[state, action_index])
 
-                candidate_state = (
-                    next_state[
-                        state,
-                        action_index
-                    ]
-                )
-
-                # Immediate feasibility
                 if candidate_state < 0:
                     continue
 
-                # Remaining-horizon viability
-                if np.isfinite(
-                    viability[
-                        remaining - 1,
-                        candidate_state
-                    ]
-                ):
-                    candidates.append(
-                        action_index
-                    )
+                if np.isfinite(viability[remaining - 1, candidate_state]):
+                    candidates.append(action_index)
 
-            if len(
-                candidates
-            ) == 0:
+            if len(candidates) == 0:
 
                 raise RuntimeError(
                     f"No viable action available "
@@ -525,20 +390,8 @@ def run_myopic_feasible_oful(
                     f"{STATE_MODEL['states'][state]}."
                 )
 
-            # Myopic choice:
-            # maximize immediate optimistic reward only.
-            action_index = max(
-                candidates,
-                key=lambda index:
-                    optimistic[index]
-            )
-
-            selected_next_state = (
-                next_state[
-                    state,
-                    action_index
-                ]
-            )
+            action_index = max(candidates, key=lambda index: optimistic[index])
+            selected_next_state = (next_state[state, action_index])
 
             if selected_next_state < 0:
                 raise RuntimeError(
@@ -546,101 +399,37 @@ def run_myopic_feasible_oful(
                     "an infeasible action."
                 )
 
-            action = (
-                ACTIONS[
-                    action_index
-                ]
-            )
-
-            action_indices.append(
-                action_index
-            )
-
-            true_reward = (
-                THETA_STAR
-                @ action
-            )
-
-            observation = (
-                true_reward
-                +
-                noise[t]
-            )
-
-            total_true_reward += (
-                true_reward
-            )
-
-            V += np.outer(
-                action,
-                action
-            )
-
-            b += (
-                action
-                *
-                observation
-            )
-
-            state = (
-                selected_next_state
-            )
-
+            action = (ACTIONS[action_index])
+            action_indices.append(action_index)
+            true_reward = (THETA_STAR @ action)
+            observation = (true_reward + noise[t])
+            total_true_reward += (true_reward)
+            V += np.outer(action, action)
+            b += (action * observation)
+            state = (selected_next_state)
             t += 1
 
-    assert_feasible(
-        action_indices
-    )
-
-    offline_value = (
-        offline_optimum(T)
-    )
-
-    regret = (
-        offline_value
-        -
-        total_true_reward
-    )
+    assert_feasible(action_indices)
+    offline_value = (offline_optimum(T))
+    regret = (offline_value - total_true_reward)
 
     return {
-        "regret":
-            float(regret),
-        "normalized_regret":
-            float(regret / T),
-        "updates":
-            int(n_updates),
+        "regret": float(regret),
+        "normalized_regret": float(regret / T),
+        "updates": int(n_updates),
     }
 
 
 
 def stationary_action_indices():
-
     stationary = []
+    total_position_weight = np.sum(POSITION_WEIGHTS)
 
-    total_position_weight = np.sum(
-        POSITION_WEIGHTS
-    )
+    for action_index in range(len(ACTIONS)):
 
-    for action_index in range(
-        len(ACTIONS)
-    ):
-
-        cost = (
-            total_position_weight
-            *
-            ACTION_COSTS[
-                action_index
-            ]
-        )
-
-        if (
-            cost
-            <=
-            BUDGET + 1e-12
-        ):
-            stationary.append(
-                action_index
-            )
+        cost = (total_position_weight * ACTION_COSTS[action_index])
+        if (cost <= BUDGET + 1e-12):
+            stationary.append(action_index)
 
     return stationary
 
@@ -691,47 +480,15 @@ def run_stationary_oful(noise):
 
 
 def print_problem_summary():
+    print("\nPlanning experiment")
+    print("-" * 70)
+    print(f"Window length: w = {W}")
+    print("Stationary feasible actions: " f"{[ACTION_NAMES[i] for i in STATIONARY_ACTIONS]}")
+    best_stationary_reward = max([TRUE_REWARDS[index] for index in STATIONARY_ACTIONS])
 
-    print(
-        "\nPlanning experiment"
-    )
-
-    print(
-        "-" * 70
-    )
-
-    print(
-        f"Window length: w = {W}"
-    )
-
-    print(
-        "Stationary feasible actions: "
-        f"{[ACTION_NAMES[i] for i in STATIONARY_ACTIONS]}"
-    )
-
-    best_stationary_reward = max([
-        TRUE_REWARDS[index]
-        for index in STATIONARY_ACTIONS
-    ])
-
-    print(
-        "Best stationary reward: "
-        f"{best_stationary_reward:.4f}"
-    )
-
-    # Feasible periodic pattern:
-    # (e1, e2, 0, e1)
-    periodic = [
-        1,
-        2,
-        0,
-        1
-    ]
-
-    periodic_average_reward = np.mean([
-        TRUE_REWARDS[index]
-        for index in periodic
-    ])
+    print("Best stationary reward: " f"{best_stationary_reward:.4f}")
+    periodic = [1, 2, 0, 1]
+    periodic_average_reward = np.mean([TRUE_REWARDS[index] for index in periodic])
 
     print(
         "Reward of feasible periodic pattern "
@@ -739,40 +496,20 @@ def print_problem_summary():
         f"{periodic_average_reward:.4f}"
     )
 
-    # Verify several cycles are feasible.
-    periodic_test = (
-        periodic * 10
-    )
+    periodic_test = (periodic * 10)
+    periodic_violations = (count_window_violations(periodic_test))
 
-    periodic_violations = (
-        count_window_violations(
-            periodic_test
-        )
-    )
-
-    print(
-        "Periodic-pattern violations: "
-        f"{periodic_violations}"
-    )
-
-    print(
-        "\nOffline benchmark values:"
-    )
+    print("Periodic-pattern violations: " f"{periodic_violations}")
+    print("\nOffline benchmark values:")
 
     for T in T_VALUES:
-
-        value = (
-            offline_optimum(
-                int(T)
-            )
-        )
+        value = (offline_optimum(int(T)))
 
         print(
             f"T={T:5d}: "
             f"V_off={value:9.4f}, "
             f"average={value/T:.4f}"
         )
-
 
 
 def run_planning_experiment(n_runs=N_RUNS, seed=BASE_SEED):
