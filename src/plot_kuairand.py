@@ -6,20 +6,11 @@ import matplotlib.pyplot as plt
 from scipy.stats import t as student_t
 
 
-# ============================================================
-# PATHS
-# ============================================================
-
 RESULT_DIR = Path("./kuairand_results")
 FIGURE_DIR = Path("./imgs")
 FIGURE_DIR.mkdir(parents=True, exist_ok=True)
-
 RESULT_FILE = RESULT_DIR / "experiment_results.csv"
 
-
-# ============================================================
-# COLORS
-# ============================================================
 
 COLORS = {
     "blue":   "#0072B2",
@@ -48,11 +39,7 @@ POLICY_LINESTYLES = {
 }
 
 
-POLICY_ORDER = [
-    "Rare-Update Optimistic Planning",
-    "Myopic Feasible OFUL",
-    "Unconstrained OFUL",
-]
+POLICY_ORDER = ["Rare-Update Optimistic Planning", "Myopic Feasible OFUL", "Unconstrained OFUL"]
 
 
 POLICY_LABELS = {
@@ -66,17 +53,9 @@ POLICY_LABELS = {
         "Unconstrained OFUL",
 }
 
-
-# ============================================================
-# PLOT SETTINGS
-# ============================================================
-
 CONFIDENCE_LEVEL = 0.95
-
 LINE_WIDTH = 2.3
-
-# Transparency of error bars
-CI_ALPHA = 0.45
+CI_ALPHA = 0.5
 
 
 plt.rcParams.update({
@@ -94,34 +73,9 @@ plt.rcParams.update({
 })
 
 
-# ============================================================
-# LOAD RESULTS
-# ============================================================
-
-results = pd.read_csv(
-    RESULT_FILE
-)
-
-
-# ============================================================
-# CHECK REQUIRED COLUMNS
-# ============================================================
-
-required_columns = {
-    "user_id",
-    "T",
-    "policy",
-    "average_expected_reward",
-    "normalized_pseudo_regret",
-    "violations",
-    "updates",
-}
-
-
-missing_columns = (
-    required_columns
-    - set(results.columns)
-)
+results = pd.read_csv(RESULT_FILE)
+required_columns = {"user_id", "T", "policy", "average_expected_reward", "normalized_pseudo_regret", "violations", "updates"}
+missing_columns = (required_columns - set(results.columns))
 
 
 if missing_columns:
@@ -131,35 +85,15 @@ if missing_columns:
     )
 
 
-# ============================================================
-# OFFLINE REWARD
-# ============================================================
-
 if "average_offline_reward" not in results.columns:
-
     if "offline_value" not in results.columns:
         raise ValueError(
             "The results file must contain either "
             "'average_offline_reward' or 'offline_value'."
         )
+    results["average_offline_reward"] = (results["offline_value"] / results["T"])
 
-    results["average_offline_reward"] = (
-        results["offline_value"]
-        / results["T"]
-    )
-
-
-# ============================================================
-# CHECK AVAILABLE POLICIES
-# ============================================================
-
-available_policies = [
-    policy
-    for policy in POLICY_ORDER
-    if policy in results["policy"].unique()
-]
-
-
+available_policies = [policy for policy in POLICY_ORDER if policy in results["policy"].unique()]
 if not available_policies:
     raise ValueError(
         "None of the expected policies were found. "
@@ -172,13 +106,6 @@ print("Policies found:")
 for policy in available_policies:
     print(" -", policy)
 
-
-# ============================================================
-# FIRST AVERAGE REPEATED RUNS WITHIN EACH USER
-#
-# After this step, each observation represents one
-# (user, T, policy).
-# ============================================================
 
 user_results = (
     results
@@ -214,39 +141,13 @@ user_results = (
 )
 
 
-# ============================================================
-# 95% STUDENT-t CONFIDENCE INTERVAL
-# ============================================================
-
-def ci_half_width(
-    std,
-    n,
-    confidence=0.95,
-):
-
+def ci_half_width(std, n, confidence=0.95):
     if n <= 1 or pd.isna(std):
         return 0.0
 
-    alpha = (
-        1.0
-        - confidence
-    )
-
-    critical_value = student_t.ppf(
-        1.0 - alpha / 2.0,
-        df=n - 1,
-    )
-
-    return (
-        critical_value
-        * std
-        / np.sqrt(n)
-    )
-
-
-# ============================================================
-# SUMMARY ACROSS USERS
-# ============================================================
+    alpha = (1.0 - confidence)
+    critical_value = student_t.ppf(1.0 - alpha / 2.0, df=n - 1)
+    return (critical_value * std / np.sqrt(n))
 
 summary = (
     user_results
@@ -258,78 +159,18 @@ summary = (
         as_index=False,
     )
     .agg(
-
-        # ----------------------------------------------------
-        # REWARD
-        # ----------------------------------------------------
-
-        mean_reward=(
-            "average_expected_reward",
-            "mean",
-        ),
-
-        std_reward=(
-            "average_expected_reward",
-            "std",
-        ),
-
-        n_reward=(
-            "average_expected_reward",
-            "count",
-        ),
-
-
-        # ----------------------------------------------------
-        # NORMALIZED REGRET
-        # ----------------------------------------------------
-
-        mean_normalized_regret=(
-            "normalized_pseudo_regret",
-            "mean",
-        ),
-
-        std_normalized_regret=(
-            "normalized_pseudo_regret",
-            "std",
-        ),
-
-        n_normalized_regret=(
-            "normalized_pseudo_regret",
-            "count",
-        ),
-
-
-        # ----------------------------------------------------
-        # VIOLATIONS
-        # ----------------------------------------------------
-
-        mean_violations=(
-            "violations",
-            "mean",
-        ),
-
-
-        # ----------------------------------------------------
-        # POLICY UPDATES
-        # ----------------------------------------------------
-
-        mean_updates=(
-            "updates",
-            "mean",
-        ),
+        mean_reward=("average_expected_reward", "mean"),
+        std_reward=("average_expected_reward", "std"),
+        n_reward=("average_expected_reward", "count"),
+        mean_normalized_regret=("normalized_pseudo_regret", "mean"),
+        std_normalized_regret=("normalized_pseudo_regret", "std"),
+        n_normalized_regret=("normalized_pseudo_regret", "count"),
+        mean_violations=("violations", "mean"),
+        mean_updates=("updates", "mean"),
     )
 )
 
 
-# ============================================================
-# COMPUTE 95% CONFIDENCE INTERVALS
-#
-# We use confidence intervals only for:
-#   - reward
-#   - normalized pseudo-regret
-#
-# We do NOT shade violations or policy updates.
-# ============================================================
 
 summary["ci_reward"] = summary.apply(
     lambda row:
@@ -341,27 +182,7 @@ summary["ci_reward"] = summary.apply(
     axis=1,
 )
 
-
-summary["ci_normalized_regret"] = summary.apply(
-    lambda row:
-        ci_half_width(
-            std=row["std_normalized_regret"],
-            n=int(row["n_normalized_regret"]),
-            confidence=CONFIDENCE_LEVEL,
-        ),
-    axis=1,
-)
-
-
-# ============================================================
-# OFFLINE BENCHMARK
-#
-# The offline optimum depends on the user but not on
-# the stochastic reward realization or policy.
-#
-# We plot only its mean across users.
-# No confidence region is shown.
-# ============================================================
+summary["ci_normalized_regret"] = summary.apply(lambda row: ci_half_width(std=row["std_normalized_regret"], n=int(row["n_normalized_regret"]), confidence=CONFIDENCE_LEVEL), axis=1)
 
 offline_user = (
     results[
@@ -394,10 +215,6 @@ offline_summary = (
     )
 )
 
-
-# ============================================================
-# DRAW PANEL
-# ============================================================
 
 def draw_panel(
     ax,
@@ -437,11 +254,6 @@ def draw_panel(
             POLICY_LINESTYLES[policy]
         )
 
-
-        # ----------------------------------------------------
-        # MEAN CURVE
-        # ----------------------------------------------------
-
         ax.plot(
             x,
             y,
@@ -452,13 +264,6 @@ def draw_panel(
             zorder=3,
         )
 
-
-        # ----------------------------------------------------
-        # 95% CONFIDENCE INTERVAL
-        #
-        # Error bars only.
-        # No markers and no shaded bands.
-        # ----------------------------------------------------
 
         if ci_metric is not None:
 
@@ -481,10 +286,6 @@ def draw_panel(
             )
 
 
-    # --------------------------------------------------------
-    # ZERO REFERENCE LINE
-    # --------------------------------------------------------
-
     if zero_line:
 
         ax.axhline(
@@ -496,10 +297,6 @@ def draw_panel(
             zorder=1,
         )
 
-
-    # --------------------------------------------------------
-    # AXIS STYLE
-    # --------------------------------------------------------
 
     ax.set_xlabel(
         "Horizon $T$"
@@ -533,20 +330,12 @@ def draw_panel(
     )
 
 
-# ============================================================
-# CREATE FIGURE
-# ============================================================
-
 fig, axes = plt.subplots(
     1,
     4,
     figsize=(18.5, 4.7),
 )
 
-
-# ============================================================
-# (a) AVERAGE EXPECTED REWARD
-# ============================================================
 
 draw_panel(
     axes[0],
@@ -556,13 +345,6 @@ draw_panel(
     title="(a) Average Expected Reward",
 )
 
-
-# ============================================================
-# ADD OFFLINE-OPTIMAL BENCHMARK
-#
-# Black dashed line only.
-# No confidence interval.
-# ============================================================
 
 offline_data = (
     offline_summary
@@ -581,10 +363,6 @@ axes[0].plot(
 )
 
 
-# ============================================================
-# (b) NORMALIZED PSEUDO-REGRET
-# ============================================================
-
 draw_panel(
     axes[1],
     metric="mean_normalized_regret",
@@ -593,13 +371,6 @@ draw_panel(
     title="(b) Normalized Pseudo-Regret",
     zero_line=True,
 )
-
-
-# ============================================================
-# (c) CONSTRAINT VIOLATIONS
-#
-# No confidence intervals.
-# ============================================================
 
 draw_panel(
     axes[2],
@@ -613,13 +384,6 @@ axes[2].set_ylim(
     bottom=0
 )
 
-
-# ============================================================
-# (d) POLICY UPDATES
-#
-# No confidence intervals.
-# ============================================================
-
 draw_panel(
     axes[3],
     metric="mean_updates",
@@ -632,10 +396,6 @@ axes[3].set_ylim(
     bottom=0
 )
 
-
-# ============================================================
-# X AXIS
-# ============================================================
 
 T_VALUES = sorted(
     summary["T"].unique()
@@ -658,10 +418,6 @@ for ax in axes:
     )
 
 
-# ============================================================
-# LEGEND
-# ============================================================
-
 handles, labels = (
     axes[0]
     .get_legend_handles_labels()
@@ -683,56 +439,34 @@ fig.legend(
 )
 
 
-# ============================================================
-# LAYOUT
-# ============================================================
-
 fig.tight_layout(
-    rect=[
-        0,
-        0,
-        1,
-        0.90,
-    ],
+    rect=[0, 0, 1, 0.90,],
     w_pad=2.0,
 )
 
 
-# ============================================================
-# SAVE
-# ============================================================
-
-png_file = (
-    FIGURE_DIR
-    / "kuairand_comparison_vs_T.png"
-)
-
-pdf_file = (
-    FIGURE_DIR
-    / "kuairand_comparison_vs_T.pdf"
-)
-
-
-fig.savefig(
-    png_file,
-    bbox_inches="tight",
-)
-
-fig.savefig(
-    pdf_file,
-    bbox_inches="tight",
-)
-
-
-print(
-    "Saved:",
-    png_file
-)
-
-print(
-    "Saved:",
-    pdf_file
-)
-
-
+png_file = (FIGURE_DIR / "kuairand.png")
+fig.savefig(png_file, bbox_inches="tight")
 plt.show()
+
+
+table = summary.copy()
+
+table["reward"] = table.apply(
+    lambda row:
+        f"{row['mean_reward']:.4f} ± {row['ci_reward']:.4f}",
+    axis=1,
+)
+
+table["regret"] = table.apply(
+    lambda row:
+        f"{row['mean_normalized_regret']:.4f} ± "
+        f"{row['ci_normalized_regret']:.4f}",
+    axis=1,
+)
+
+table["violations"] = table["mean_violations"].map(lambda x: f"{x:.1f}")
+table["updates"] = table["mean_updates"].map(lambda x: f"{x:.1f}")
+table = table[["T", "policy", "reward", "regret", "violations", "updates"]].sort_values(["T", "policy"])
+
+print(table.to_string(index=False))
