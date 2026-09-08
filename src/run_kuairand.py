@@ -1,48 +1,63 @@
 from pathlib import Path
 from collections import Counter
+
 import numpy as np
 import pandas as pd
+from tqdm import tqdm
 
+
+# ============================================================
+# PATHS
+# ============================================================
 
 DATA_DIR = Path("./kuairand_processed")
 OUTPUT_DIR = Path("./kuairand_results")
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
-# Sliding-window constraint
+
+# ============================================================
+# EXPERIMENTAL PARAMETERS
+# ============================================================
+
 W = 20
 C = 5
 
-# Horizon. Keep divisible by W for the simple offline benchmark.
-T = 5000
+T_VALUES = [
+    500,
+    1000,
+    1500,
+    2000,
+    2500,
+    3000,
+    3500,
+    4000,
+    4500,
+    5000,
+]
 
-# Number of repeated simulations for each user
+N_USERS = 100
 N_RUNS = 10
 
-# Minimum observations required for every selected category
 MIN_CATEGORY_INTERACTIONS = 50
 
-# None = use every eligible user
-# Set, e.g., 100 for faster experiments.
-N_USERS = 4
-
-# Which preference estimate to treat as theta*
-# Alternatives: "raw_click_rate", "theta_hat"
 THETA_COLUMN = "theta_hat"
-
 RANDOM_SEED = 42
 
 
 # ============================================================
-# 1. LOAD THE PROCESSED CSV FILES
+# POLICIES
 # ============================================================
 
-summary = pd.read_csv(
-    DATA_DIR / "dataset_summary.csv"
-)
+policies = [
+    "Rare-Update Optimistic Planning",
+    "Myopic Feasible OFUL",
+    "Unconstrained OFUL",
+]
 
-categories = pd.read_csv(
-    DATA_DIR / "all_first_level_categories.csv"
-)
+
+# ============================================================
+# LOAD DATA
+# ============================================================
 
 top_categories = pd.read_csv(
     DATA_DIR / "top_categories.csv"
@@ -57,53 +72,29 @@ coverage = pd.read_csv(
 )
 
 
-print("\n================ DATASET ================")
-print(summary)
-
-print("\n================ TOP CATEGORIES ================")
-print(
-    top_categories[
-        [
-            "action_id",
-            "category_id",
-            "category_name",
-            "n_interactions",
-            "click_rate",
-        ]
-    ].to_string(index=False)
-)
-
-
-# ============================================================
-# 2. DETERMINE K
-# ============================================================
-
+# Number of actions
 K = len(top_categories)
 
-print("\nNumber of actions K =", K)
 
-# Make sure action IDs are 0,...,K-1
-top_categories = top_categories.sort_values(
-    "action_id"
-).reset_index(drop=True)
+# ============================================================
+# OFUL PARAMETERS
+# ============================================================
 
-expected_ids = np.arange(K)
+LAMBDA_REG = 1.0
+DELTA = 0.05
 
-actual_ids = top_categories[
-    "action_id"
-].astype(int).to_numpy()
+# Bernoulli centered noise is 1/2-sub-Gaussian
+NOISE_R = 0.5
 
-if not np.array_equal(
-    actual_ids,
-    expected_ids
-):
-    raise ValueError(
-        "action_id must be 0,...,K-1."
-    )
+# Since theta_j in [0,1]
+THETA_NORM_BOUND = np.sqrt(K)
+
+# determinant-doubling threshold
+DET_FACTOR = 2.0
 
 
 # ============================================================
-# 3. SELECT RELIABLE USERS
+# ELIGIBLE USERS
 # ============================================================
 
 eligible = coverage[
@@ -116,20 +107,15 @@ eligible = coverage[
 ].copy()
 
 
-print(
-    "\nEligible users:",
-    len(eligible),
-    "/",
-    len(coverage)
-)
-
-
-# Optional reproducible subsampling
 rng_users = np.random.default_rng(
     RANDOM_SEED
 )
 
-if N_USERS is not None and len(eligible) > N_USERS:
+
+if (
+    N_USERS is not None
+    and len(eligible) > N_USERS
+):
 
     selected_user_ids = rng_users.choice(
         eligible["user_id"].to_numpy(),
@@ -139,19 +125,13 @@ if N_USERS is not None and len(eligible) > N_USERS:
 
 else:
 
-    selected_user_ids = eligible[
-        "user_id"
-    ].to_numpy()
-
-
-print(
-    "Users used in experiment:",
-    len(selected_user_ids)
-)
+    selected_user_ids = (
+        eligible["user_id"].to_numpy()
+    )
 
 
 # ============================================================
-# 4. CONSTRUCT theta*_u FOR A USER
+# USER-SPECIFIC TRUE REWARD VECTOR
 # ============================================================
 
 def get_theta(user_id):
@@ -164,12 +144,13 @@ def get_theta(user_id):
         "action_id"
     )
 
-    # Ensure all K actions exist
+
     if len(user_data) != K:
         raise ValueError(
-            f"User {user_id} does not have "
-            f"all {K} categories."
+            f"User {user_id} has {len(user_data)} "
+            f"categories; expected {K}."
         )
+
 
     action_ids = (
         user_data["action_id"]
@@ -179,11 +160,13 @@ def get_theta(user_id):
 
     if not np.array_equal(
         action_ids,
-        np.arange(K)
+        np.arange(K),
     ):
         raise ValueError(
-            f"Invalid action mapping for user {user_id}"
+            f"Unexpected action IDs for user {user_id}: "
+            f"{action_ids}"
         )
+
 
     theta_star = (
         user_data[THETA_COLUMN]
@@ -194,26 +177,49 @@ def get_theta(user_id):
     return theta_star
 
 
-# Example
-example_user = selected_user_ids[0]
+# ============================================================
+# OFFLINE-OPTIMAL FEASIBLE VALUE
+# ============================================================
 
-theta_example = get_theta(
-    example_user
-)
+def offline_value(
+    theta_star,
+    T,
+    w=20,
+    c=5,
+):
 
-print(
-    "\nExample user:",
-    example_user
-)
+    if w % c != 0:
+        raise ValueError(
+            "offline_value requires w divisible by c."
+        )
 
-print(
-    "theta* =",
-    np.round(theta_example, 4)
-)
+    if T % w != 0:
+        raise ValueError(
+            "offline_value currently assumes T divisible by w."
+        )
+
+
+    number_of_categories = (
+        w // c
+    )
+
+    best = (
+        np.sort(theta_star)[::-1]
+        [:number_of_categories]
+    )
+
+    value_per_block = (
+        c * best.sum()
+    )
+
+    return (
+        (T // w)
+        * value_per_block
+    )
 
 
 # ============================================================
-# 5. EXACT SLIDING-WINDOW ENVIRONMENT
+# ENVIRONMENT
 # ============================================================
 
 class RollingExposureEnvironment:
@@ -228,7 +234,7 @@ class RollingExposureEnvironment:
 
         self.theta = np.asarray(
             theta_star,
-            dtype=float
+            dtype=float,
         )
 
         self.K = len(self.theta)
@@ -249,25 +255,29 @@ class RollingExposureEnvironment:
 
     def feasible_actions(self):
 
-        # Only previous w-1 actions matter
-        recent_history = self.history[
-            -(self.w - 1):
-        ]
+        recent_history = (
+            self.history[
+                -(self.w - 1):
+            ]
+        )
 
         counts = Counter(
             recent_history
         )
 
         feasible = [
-            a
-            for a in range(self.K)
-            if counts[a] < self.c
+            action
+            for action in range(self.K)
+            if counts[action] < self.c
         ]
 
         return feasible
 
 
-    def step(self, action):
+    def step(
+        self,
+        action,
+    ):
 
         action = int(action)
 
@@ -278,26 +288,32 @@ class RollingExposureEnvironment:
         reward = int(
             self.rng.binomial(
                 1,
-                expected_reward
+                expected_reward,
             )
         )
 
-        self.history.append(action)
 
-        # Count violations exactly as in the paper:
-        # one violation for each complete window
-        # containing any over-exposed category.
+        self.history.append(
+            action
+        )
+
+
         violation = False
 
         if len(self.history) >= self.w:
 
-            window = self.history[-self.w:]
+            window = (
+                self.history[-self.w:]
+            )
 
-            counts = Counter(window)
+            counts = Counter(
+                window
+            )
 
             violation = any(
                 count > self.c
-                for count in counts.values()
+                for count
+                in counts.values()
             )
 
             if violation:
@@ -310,6 +326,7 @@ class RollingExposureEnvironment:
             expected_reward
         )
 
+
         return (
             reward,
             expected_reward,
@@ -318,86 +335,154 @@ class RollingExposureEnvironment:
 
 
 # ============================================================
-# 6. UCB POLICY
+# OFUL ESTIMATOR
 # ============================================================
 
-class UCB:
+class OptimisticLinearBandit:
 
     def __init__(
         self,
         K,
-        seed=0,
+        lambda_reg=1.0,
+        delta=0.05,
+        noise_r=0.5,
+        theta_norm_bound=None,
     ):
 
         self.K = K
 
-        self.counts = np.zeros(
+        self.lambda_reg = lambda_reg
+        self.delta = delta
+        self.noise_r = noise_r
+
+
+        if theta_norm_bound is None:
+            theta_norm_bound = np.sqrt(K)
+
+
+        self.theta_norm_bound = (
+            theta_norm_bound
+        )
+
+
+        # Since actions are one-hot,
+        # V_t is diagonal.
+
+        self.v_diag = np.full(
             K,
-            dtype=int
+            lambda_reg,
+            dtype=float,
         )
 
-        self.reward_sum = np.zeros(
+
+        # b_t = sum x_q Y_q
+
+        self.b = np.zeros(
             K,
-            dtype=float
-        )
-
-        self.rng = np.random.default_rng(
-            seed
+            dtype=float,
         )
 
 
-    def choose(
-        self,
-        actions,
-        t,
-    ):
+    def theta_hat(self):
 
-        actions = np.asarray(
-            actions,
-            dtype=int
+        return (
+            self.b
+            / self.v_diag
         )
 
-        # Explore actions not yet tried
-        unseen = actions[
-            self.counts[actions] == 0
-        ]
 
-        if len(unseen) > 0:
+    def logdet(self):
 
-            return int(
-                self.rng.choice(unseen)
+        return float(
+            np.log(
+                self.v_diag
+            ).sum()
+        )
+
+
+    def beta(self):
+
+        logdet_v = (
+            self.logdet()
+        )
+
+        logdet_lambda = (
+            self.K
+            * np.log(
+                self.lambda_reg
             )
-
-
-        empirical_mean = (
-            self.reward_sum[actions]
-            /
-            self.counts[actions]
         )
 
-        bonus = np.sqrt(
-            2.0
-            * np.log(max(t, 2))
-            /
-            self.counts[actions]
+
+        log_term = (
+            0.5
+            * (
+                logdet_v
+                - logdet_lambda
+            )
+            +
+            np.log(
+                1.0
+                / self.delta
+            )
         )
+
+
+        beta = (
+            self.noise_r
+            * np.sqrt(
+                2.0
+                * max(
+                    log_term,
+                    0.0,
+                )
+            )
+            +
+            np.sqrt(
+                self.lambda_reg
+            )
+            * self.theta_norm_bound
+        )
+
+
+        return float(beta)
+
+
+    def optimistic_scores(self):
+
+        theta_hat = (
+            self.theta_hat()
+        )
+
+        beta = (
+            self.beta()
+        )
+
+
+        # For one-hot e_j:
+        #
+        # ||e_j||_{V^{-1}}
+        # =
+        # 1 / sqrt(V_jj)
+
+        bonus = (
+            beta
+            / np.sqrt(
+                self.v_diag
+            )
+        )
+
 
         scores = (
-            empirical_mean
+            theta_hat
             + bonus
         )
 
-        max_score = scores.max()
 
-        candidates = actions[
-            np.isclose(
-                scores,
-                max_score
-            )
-        ]
-
-        return int(
-            self.rng.choice(candidates)
+        return np.clip(
+            scores,
+            0.0,
+            1.0,
         )
 
 
@@ -407,31 +492,231 @@ class UCB:
         reward,
     ):
 
-        self.counts[action] += 1
+        action = int(action)
 
-        self.reward_sum[action] += reward
+        self.v_diag[action] += 1.0
+
+        self.b[action] += reward
 
 
 # ============================================================
-# 7. UNIFORM FEASIBLE POLICY
+# MYOPIC / UNCONSTRAINED OFUL
 # ============================================================
 
-class UniformFeasible:
+class OFULPolicy:
 
     def __init__(
         self,
+        K,
+        lambda_reg=1.0,
+        delta=0.05,
+        noise_r=0.5,
+        theta_norm_bound=None,
         seed=0,
     ):
+
+        self.K = K
 
         self.rng = np.random.default_rng(
             seed
         )
 
 
+        self.model = OptimisticLinearBandit(
+            K=K,
+            lambda_reg=lambda_reg,
+            delta=delta,
+            noise_r=noise_r,
+            theta_norm_bound=theta_norm_bound,
+        )
+
+
+        # These policies recompute their
+        # optimistic decision every round.
+
+        self.n_updates = 0
+
+
     def choose(
         self,
+        actions,
+    ):
+
+        actions = np.asarray(
+            actions,
+            dtype=int,
+        )
+
+
+        if len(actions) == 0:
+            raise RuntimeError(
+                "No available action."
+            )
+
+
+        scores = (
+            self.model
+            .optimistic_scores()[
+                actions
+            ]
+        )
+
+
+        max_score = (
+            scores.max()
+        )
+
+
+        candidates = (
+            actions[
+                np.isclose(
+                    scores,
+                    max_score,
+                )
+            ]
+        )
+
+
+        self.n_updates += 1
+
+
+        return int(
+            self.rng.choice(
+                candidates
+            )
+        )
+
+
+    def update(
+        self,
+        action,
+        reward,
+    ):
+
+        self.model.update(
+            action,
+            reward,
+        )
+
+
+# ============================================================
+# RARE-UPDATE OPTIMISTIC PLANNING
+# ============================================================
+
+class RareUpdateOptimisticPlanning:
+
+    def __init__(
+        self,
+        K,
+        w,
+        c,
+        lambda_reg=1.0,
+        delta=0.05,
+        noise_r=0.5,
+        theta_norm_bound=None,
+        det_factor=2.0,
+        seed=0,
+    ):
+
+        self.K = K
+        self.w = w
+        self.c = c
+
+        self.det_factor = (
+            det_factor
+        )
+
+
+        self.rng = (
+            np.random.default_rng(
+                seed
+            )
+        )
+
+
+        self.model = OptimisticLinearBandit(
+            K=K,
+            lambda_reg=lambda_reg,
+            delta=delta,
+            noise_r=noise_r,
+            theta_norm_bound=theta_norm_bound,
+        )
+
+
+        # log det(W_k)
+        self.episode_logdet = None
+
+        # U_k held fixed inside an episode
+        self.frozen_scores = None
+
+        # Number of replanning events
+        self.n_updates = 0
+
+
+        # Feasible initialization
+        self.initial_order = (
+            self.rng.permutation(
+                K
+            )
+        )
+
+
+    def start_new_episode(self):
+
+        # W_k = V_{t_k}
+        self.episode_logdet = (
+            self.model.logdet()
+        )
+
+
+        # Freeze optimistic objective U_k
+        self.frozen_scores = (
+            self.model
+            .optimistic_scores()
+        )
+
+
+        self.n_updates += 1
+
+
+    def determinant_doubled(self):
+
+        if self.episode_logdet is None:
+            return True
+
+
+        return (
+            self.model.logdet()
+            >
+            self.episode_logdet
+            + np.log(
+                self.det_factor
+            )
+        )
+
+
+    def initialization_action(
+        self,
+        t,
         feasible_actions,
     ):
+
+        index = (
+            (t - 1)
+            % self.K
+        )
+
+
+        preferred = int(
+            self.initial_order[
+                index
+            ]
+        )
+
+
+        if preferred in feasible_actions:
+            return preferred
+
 
         return int(
             self.rng.choice(
@@ -440,61 +725,101 @@ class UniformFeasible:
         )
 
 
-# ============================================================
-# 8. OFFLINE FEASIBLE VALUE
-# ============================================================
+    def planning_action(
+        self,
+        feasible_actions,
+    ):
 
-def offline_value(
-    theta_star,
-    T,
-    w=20,
-    c=5,
-):
-
-    """
-    Exact for the experiment considered here when:
-        T is divisible by w,
-        rewards are nonnegative,
-        and the rolling cap is c per category.
-
-    For w=20 and c=5, each 20-round period
-    uses the four highest-reward categories
-    exactly five times.
-    """
-
-    if T % w != 0:
-        raise ValueError(
-            "Use T divisible by w for "
-            "this benchmark."
+        feasible_actions = np.asarray(
+            feasible_actions,
+            dtype=int,
         )
 
-    if w % c != 0:
-        raise ValueError(
-            "This simple formula assumes "
-            "w is divisible by c."
+
+        scores = (
+            self.frozen_scores[
+                feasible_actions
+            ]
         )
 
-    number_of_categories = (
-        w // c
-    )
 
-    best = np.sort(
-        theta_star
-    )[::-1][
-        :number_of_categories
-    ]
+        max_score = (
+            scores.max()
+        )
 
-    value_per_block = (
-        c * best.sum()
-    )
 
-    return (
-        T // w
-    ) * value_per_block
+        candidates = (
+            feasible_actions[
+                np.isclose(
+                    scores,
+                    max_score,
+                )
+            ]
+        )
+
+
+        return int(
+            self.rng.choice(
+                candidates
+            )
+        )
+
+
+    def choose(
+        self,
+        feasible_actions,
+        t,
+    ):
+
+        feasible_actions = list(
+            feasible_actions
+        )
+
+
+        if len(feasible_actions) == 0:
+            raise RuntimeError(
+                "No feasible action available."
+            )
+
+
+        # Feasible initialization prefix
+        if t < self.w:
+
+            return (
+                self.initialization_action(
+                    t=t,
+                    feasible_actions=feasible_actions,
+                )
+            )
+
+
+        # Determinant-doubling update
+        if self.determinant_doubled():
+
+            self.start_new_episode()
+
+
+        return (
+            self.planning_action(
+                feasible_actions
+            )
+        )
+
+
+    def update(
+        self,
+        action,
+        reward,
+    ):
+
+        self.model.update(
+            action,
+            reward,
+        )
 
 
 # ============================================================
-# 9. RUN ONE POLICY
+# RUN ONE POLICY
 # ============================================================
 
 def run_policy(
@@ -512,26 +837,63 @@ def run_policy(
     )
 
 
-    if policy_name == "Myopic Feasible UCB":
+    # --------------------------------------------------------
+    # Proposed method
+    # --------------------------------------------------------
 
-        agent = UCB(
+    if (
+        policy_name
+        == "Rare-Update Optimistic Planning"
+    ):
+
+        agent = RareUpdateOptimisticPlanning(
             K=len(theta_star),
+            w=W,
+            c=C,
+            lambda_reg=LAMBDA_REG,
+            delta=DELTA,
+            noise_r=NOISE_R,
+            theta_norm_bound=THETA_NORM_BOUND,
+            det_factor=DET_FACTOR,
             seed=seed + 1000,
         )
 
 
-    elif policy_name == "Unconstrained UCB":
+    # --------------------------------------------------------
+    # Myopic Feasible OFUL
+    # --------------------------------------------------------
 
-        agent = UCB(
+    elif (
+        policy_name
+        == "Myopic Feasible OFUL"
+    ):
+
+        agent = OFULPolicy(
             K=len(theta_star),
+            lambda_reg=LAMBDA_REG,
+            delta=DELTA,
+            noise_r=NOISE_R,
+            theta_norm_bound=THETA_NORM_BOUND,
             seed=seed + 1000,
         )
 
 
-    elif policy_name == "Uniform Feasible":
+    # --------------------------------------------------------
+    # Unconstrained OFUL
+    # --------------------------------------------------------
 
-        agent = UniformFeasible(
-            seed=seed + 1000
+    elif (
+        policy_name
+        == "Unconstrained OFUL"
+    ):
+
+        agent = OFULPolicy(
+            K=len(theta_star),
+            lambda_reg=LAMBDA_REG,
+            delta=DELTA,
+            noise_r=NOISE_R,
+            theta_norm_bound=THETA_NORM_BOUND,
+            seed=seed + 1000,
         )
 
 
@@ -542,67 +904,69 @@ def run_policy(
         )
 
 
-    for t in range(1, T + 1):
+    # ========================================================
+    # INTERACTION
+    # ========================================================
+
+    for t in range(
+        1,
+        T + 1,
+    ):
 
         feasible = (
             env.feasible_actions()
         )
 
 
-        # ------------------------------------------
-        # Myopic Feasible UCB
-        # ------------------------------------------
-
-        if policy_name == "Myopic Feasible UCB":
+        if (
+            policy_name
+            == "Rare-Update Optimistic Planning"
+        ):
 
             action = agent.choose(
-                feasible,
-                t,
+                feasible_actions=feasible,
+                t=t,
             )
 
 
-        # ------------------------------------------
-        # Unconstrained UCB
-        #
-        # Deliberately ignores feasibility.
-        # ------------------------------------------
-
-        elif policy_name == "Unconstrained UCB":
-
-            action = agent.choose(
-                np.arange(
-                    len(theta_star)
-                ),
-                t,
-            )
-
-
-        # ------------------------------------------
-        # Uniform Feasible
-        # ------------------------------------------
-
-        elif policy_name == "Uniform Feasible":
+        elif (
+            policy_name
+            == "Myopic Feasible OFUL"
+        ):
 
             action = agent.choose(
                 feasible
             )
 
 
-        reward, expected, violation = (
-            env.step(action)
+        elif (
+            policy_name
+            == "Unconstrained OFUL"
+        ):
+
+            action = agent.choose(
+                np.arange(
+                    len(theta_star)
+                )
+            )
+
+
+        reward, _, _ = (
+            env.step(
+                action
+            )
         )
 
 
-        if policy_name in {
-            "Myopic Feasible UCB",
-            "Unconstrained UCB",
-        }:
+        agent.update(
+            action,
+            reward,
+        )
 
-            agent.update(
-                action,
-                reward,
-            )
 
+    # ========================================================
+    # EVALUATION
+    # ========================================================
 
     V_off = offline_value(
         theta_star=theta_star,
@@ -619,6 +983,7 @@ def run_policy(
 
 
     return {
+
         "realized_reward":
             env.realized_reward,
 
@@ -642,163 +1007,240 @@ def run_policy(
 
         "violations":
             env.n_violations,
+
+        "updates":
+            agent.n_updates,
     }
 
 
 # ============================================================
-# 10. RUN EXPERIMENT OVER USERS
+# COMPLETE EXPERIMENT
 # ============================================================
 
-policies = [
-    "Myopic Feasible UCB",
-    "Unconstrained UCB",
-    "Uniform Feasible",
-]
+def run():
+
+    results = []
 
 
-results = []
+    for user_index, user_id in enumerate(
+        tqdm(
+            selected_user_ids,
+            desc="Processing users",
+            unit="user",
+        )
+    ):
 
-
-for user_index, user_id in enumerate(
-    selected_user_ids
-):
-
-    theta_star = get_theta(
-        user_id
-    )
-
-
-    if user_index % 10 == 0:
-
-        print(
-            f"Processing user "
-            f"{user_index + 1}/"
-            f"{len(selected_user_ids)}"
+        theta_star = get_theta(
+            user_id
         )
 
 
-    for run in range(N_RUNS):
+        for T in T_VALUES:
 
-        for policy_name in policies:
+            for run_idx in range(
+                N_RUNS
+            ):
 
-            seed = (
-                RANDOM_SEED
-                + 100000 * user_index
-                + 100 * run
-            )
+                for policy_name in policies:
 
-            outcome = run_policy(
-                theta_star=theta_star,
-                policy_name=policy_name,
-                T=T,
-                seed=seed,
-            )
+                    seed = (
+                        RANDOM_SEED
+                        + 100000 * user_index
+                        + 100 * run_idx
+                    )
 
 
-            results.append({
-                "user_id":
-                    user_id,
-
-                "run":
-                    run,
-
-                "policy":
-                    policy_name,
-
-                **outcome,
-            })
+                    outcome = run_policy(
+                        theta_star=theta_star,
+                        policy_name=policy_name,
+                        T=T,
+                        seed=seed,
+                    )
 
 
-# ============================================================
-# 11. SAVE RAW RESULTS
-# ============================================================
-
-results_df = pd.DataFrame(
-    results
-)
-
-results_file = (
-    OUTPUT_DIR
-    / "experiment_results.csv"
-)
-
-results_df.to_csv(
-    results_file,
-    index=False
-)
-
-print(
-    "\nSaved:",
-    results_file
-)
+                    results.append({
+                        "user_id": user_id,
+                        "run_idx": run_idx,
+                        "T": T,
+                        "policy": policy_name,
+                        **outcome,
+                    })
 
 
-# ============================================================
-# 12. CREATE SUMMARY TABLE
-# ============================================================
+    # ========================================================
+    # RAW RESULTS
+    # ========================================================
 
-summary_results = (
-    results_df
-    .groupby(
-        "policy",
-        as_index=False
+    results_df = pd.DataFrame(
+        results
     )
-    .agg(
-        mean_expected_reward=(
-            "average_expected_reward",
-            "mean",
-        ),
 
-        std_expected_reward=(
-            "average_expected_reward",
-            "std",
-        ),
 
-        mean_normalized_regret=(
-            "normalized_pseudo_regret",
-            "mean",
-        ),
-
-        std_normalized_regret=(
-            "normalized_pseudo_regret",
-            "std",
-        ),
-
-        mean_violations=(
-            "violations",
-            "mean",
-        ),
-
-        std_violations=(
-            "violations",
-            "std",
-        ),
+    results_df[
+        "average_offline_reward"
+    ] = (
+        results_df["offline_value"]
+        / results_df["T"]
     )
-)
 
 
-summary_file = (
-    OUTPUT_DIR
-    / "experiment_summary.csv"
-)
-
-summary_results.to_csv(
-    summary_file,
-    index=False
-)
-
-
-print(
-    "\n================ RESULTS ================"
-)
-
-print(
-    summary_results.to_string(
-        index=False
+    results_file = (
+        OUTPUT_DIR
+        / "experiment_results.csv"
     )
-)
 
-print(
-    "\nSaved:",
-    summary_file
-)
+
+    results_df.to_csv(
+        results_file,
+        index=False,
+    )
+
+
+    # ========================================================
+    # FIRST AVERAGE RUNS WITHIN EACH USER
+    # ========================================================
+
+    user_results = (
+        results_df
+        .groupby(
+            [
+                "user_id",
+                "T",
+                "policy",
+            ],
+            as_index=False,
+        )
+        .agg(
+
+            offline_value=(
+                "offline_value",
+                "mean",
+            ),
+
+            average_offline_reward=(
+                "average_offline_reward",
+                "mean",
+            ),
+
+            average_expected_reward=(
+                "average_expected_reward",
+                "mean",
+            ),
+
+            normalized_pseudo_regret=(
+                "normalized_pseudo_regret",
+                "mean",
+            ),
+
+            violations=(
+                "violations",
+                "mean",
+            ),
+
+            updates=(
+                "updates",
+                "mean",
+            ),
+        )
+    )
+
+
+    # ========================================================
+    # THEN AVERAGE ACROSS USERS
+    # ========================================================
+
+    summary_results = (
+        user_results
+        .groupby(
+            [
+                "T",
+                "policy",
+            ],
+            as_index=False,
+        )
+        .agg(
+
+            mean_offline_value=(
+                "offline_value",
+                "mean",
+            ),
+
+            std_offline_value=(
+                "offline_value",
+                "std",
+            ),
+
+            mean_average_offline_reward=(
+                "average_offline_reward",
+                "mean",
+            ),
+
+            std_average_offline_reward=(
+                "average_offline_reward",
+                "std",
+            ),
+
+            mean_expected_reward=(
+                "average_expected_reward",
+                "mean",
+            ),
+
+            std_expected_reward=(
+                "average_expected_reward",
+                "std",
+            ),
+
+            mean_normalized_regret=(
+                "normalized_pseudo_regret",
+                "mean",
+            ),
+
+            std_normalized_regret=(
+                "normalized_pseudo_regret",
+                "std",
+            ),
+
+            mean_violations=(
+                "violations",
+                "mean",
+            ),
+
+            std_violations=(
+                "violations",
+                "std",
+            ),
+
+            mean_updates=(
+                "updates",
+                "mean",
+            ),
+
+            std_updates=(
+                "updates",
+                "std",
+            ),
+        )
+    )
+
+
+    summary_file = (
+        OUTPUT_DIR
+        / "experiment_summary.csv"
+    )
+
+
+    summary_results.to_csv(
+        summary_file,
+        index=False,
+    )
+
+
+    print(
+        summary_results.to_string(
+            index=False
+        )
+    )
+
+
+if __name__ == "__main__":
+    run()

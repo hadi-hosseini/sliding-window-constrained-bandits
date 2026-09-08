@@ -23,66 +23,38 @@ COLORS = {
 def solve_offline_lp(T, w, solver="CLARABEL"):
 
     x = cp.Variable(T)
-
-    constraints = [
-        x >= 0,
-        x <= 1
-    ]
+    constraints = [x >= 0, x <= 1]
 
     for t in range(w - 1, T):
-        constraints.append(
-            cp.sum(x[t - w + 1:t + 1]) <= w / 2
-        )
+        constraints.append(cp.sum(x[t - w + 1:t + 1]) <= w / 2)
 
-    objective = cp.Maximize(
-        cp.sum(x)
-    )
-
-    problem = cp.Problem(
-        objective,
-        constraints
-    )
+    objective = cp.Maximize(cp.sum(x))
+    problem = cp.Problem(objective, constraints)
 
     try:
-        problem.solve(
-            solver=solver
-        )
+        problem.solve(solver=solver)
     except cp.error.SolverError:
         problem.solve()
 
-    if problem.status not in [
-        cp.OPTIMAL,
-        cp.OPTIMAL_INACCURATE
-    ]:
+    if problem.status not in [cp.OPTIMAL, cp.OPTIMAL_INACCURATE]:
         raise RuntimeError(
             f"Optimization failed for T={T}, w={w}. "
             f"Status: {problem.status}"
         )
 
-    return (
-        float(problem.value),
-        np.asarray(x.value).flatten()
-    )
+    return (float(problem.value), np.asarray(x.value).flatten())
 
 
 def stationary_value(T):
-
     z_star = 0.5
-
     return T * z_star
 
 
 def run_geometry_experiment():
-
-    w_values = [
-        4, 6, 8, 10, 12, 14, 16, 18,
-        20, 22, 24, 26, 28, 30, 32
-    ]
-
+    w_values = [4, 6, 8, 10, 12, 14, 16, 18, 20, 22, 24, 26, 28, 30, 32]
     results = {}
 
     for w in w_values:
-
         remainders = []
         horizons = []
         offline_values = []
@@ -93,21 +65,10 @@ def run_geometry_experiment():
         print("-" * 65)
 
         for r in range(w):
-
             T = 20 * w + r
-
-            V_T, x_opt = solve_offline_lp(
-                T=T,
-                w=w
-            )
-
-            V_stationary = stationary_value(
-                T
-            )
-
-            delta_T = (
-                V_T - V_stationary
-            )
+            V_T, x_opt = solve_offline_lp(T=T, w=w)
+            V_stationary = stationary_value(T)
+            delta_T = V_T - V_stationary
 
             if abs(delta_T) < 1e-7:
                 delta_T = 0.0
@@ -115,9 +76,7 @@ def run_geometry_experiment():
             remainders.append(r)
             horizons.append(T)
             offline_values.append(V_T)
-            stationary_values.append(
-                V_stationary
-            )
+            stationary_values.append(V_stationary)
             gaps.append(delta_T)
 
             print(
@@ -132,49 +91,20 @@ def run_geometry_experiment():
             "r": np.array(remainders),
             "T": np.array(horizons),
             "V_T": np.array(offline_values),
-            "stationary": np.array(
-                stationary_values
-            ),
+            "stationary": np.array(stationary_values),
             "gap": np.array(gaps),
         }
 
     return results
 
 
-def plot_geometry_experiment(
-    results,
-    w=32
-):
-
-    if w not in results:
-        raise ValueError(
-            f"w={w} is not available. "
-            f"Available values: "
-            f"{list(results.keys())}"
-        )
-
+def plot_geometry_experiment(results, w=32):
     data = results[w]
+    w_values = np.array(sorted(results.keys()))
+    max_gaps = np.array([np.max(results[current_w]["gap"]) for current_w in w_values])
 
-    w_values = np.array(
-        sorted(results.keys())
-    )
-
-    max_gaps = np.array([
-        np.max(
-            results[current_w]["gap"]
-        )
-        for current_w in w_values
-    ])
-
-    theoretical_gaps = (
-        w_values / 4.0
-    )
-
-    fig, axes = plt.subplots(
-        1,
-        2,
-        figsize=(14, 5.2)
-    )
+    theoretical_gaps = (w_values / 4.0)
+    fig, axes = plt.subplots(1, 2, figsize=(14, 5.2))
 
     ax1 = axes[0]
 
@@ -349,24 +279,16 @@ def plot_geometry_experiment(
     )
 
     fig.savefig(
-        "imgs/experiment1_geometry_combined.png",
+        "imgs/geometry.png",
         dpi=300,
         bbox_inches="tight"
     )
 
     plt.show()
-
-    print(
-        "\nObserved vs. theoretical maximum gaps"
-    )
-
+    print("\nObserved vs. theoretical maximum gaps")
     print("-" * 60)
 
-    for current_w, observed, theory in zip(
-        w_values,
-        max_gaps,
-        theoretical_gaps
-    ):
+    for current_w, observed, theory in zip(w_values, max_gaps, theoretical_gaps):
 
         print(
             f"w={current_w:2d}, "
@@ -376,128 +298,8 @@ def plot_geometry_experiment(
         )
 
 
-def plot_optimal_trajectory(
-    w=8,
-    r=4
-):
-
-    T = (
-        20 * w + r
-    )
-
-    V_T, x_opt = solve_offline_lp(
-        T=T,
-        w=w
-    )
-
-    V_stationary = stationary_value(
-        T
-    )
-
-    delta_T = (
-        V_T - V_stationary
-    )
-
-    fig, ax = plt.subplots(
-        figsize=(11, 3.8)
-    )
-
-    ax.step(
-        np.arange(
-            1,
-            T + 1
-        ),
-        x_opt,
-        where="mid",
-        color=COLORS["blue"],
-        linewidth=1.6
-    )
-
-    ax.set_xlabel(
-        "Time t",
-        fontsize=12
-    )
-
-    ax.set_ylabel(
-        "Action value",
-        fontsize=12
-    )
-
-    ax.set_title(
-        f"Offline Optimal Trajectory "
-        f"(w = {w}, r = {r}, "
-        f"gap = {delta_T:.2f})",
-        fontsize=13,
-        pad=10
-    )
-
-    ax.set_ylim(
-        -0.05,
-        1.05
-    )
-
-    ax.grid(
-        linestyle="--",
-        linewidth=0.7,
-        alpha=0.22
-    )
-
-    ax.spines[
-        "top"
-    ].set_visible(False)
-
-    ax.spines[
-        "right"
-    ].set_visible(False)
-
-    ax.spines[
-        "left"
-    ].set_linewidth(0.8)
-
-    ax.spines[
-        "bottom"
-    ].set_linewidth(0.8)
-
-    ax.tick_params(
-        axis="both",
-        labelsize=10
-    )
-
-    fig.tight_layout()
-
-    fig.savefig(
-        f"imgs/"
-        f"experiment1_optimal_trajectory_"
-        f"w{w}_r{r}.png",
-        dpi=300,
-        bbox_inches="tight"
-    )
-
-    plt.show()
-
-    print(
-        f"\nOptimal trajectory:"
-        f"\nw = {w}"
-        f"\nr = {r}"
-        f"\nT = {T}"
-        f"\nOffline value = {V_T:.4f}"
-        f"\nStationary value = {V_stationary:.4f}"
-        f"\nGap = {delta_T:.4f}"
-    )
-
-
 if __name__ == "__main__":
 
-    results = (
-        run_geometry_experiment()
-    )
-
-    plot_geometry_experiment(
-        results,
-        w=32
-    )
-
-    plot_optimal_trajectory(
-        w=8,
-        r=4
-    )
+    results = run_geometry_experiment()
+    plot_geometry_experiment(results, w=32)
+    # plot_optimal_trajectory(w=8, r=4)
