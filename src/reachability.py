@@ -3,9 +3,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from tqdm import tqdm
 
-
 os.makedirs("imgs", exist_ok=True)
-
 
 COLORS = {
     "blue":   "#0072B2",
@@ -21,32 +19,24 @@ COLORS = {
 
 
 THETA_STAR = np.array([0.55, 0.60, 0.65, 0.70, 0.75, 0.80, 0.90, 1.00 ])
-
 D = 8
 W = 8
 T = 16384
-
 RHO_VALUES = [0.25, 0.50, 1.00, 2.00]
-
 NOISE_STD = 0.1
-
 LAMBDA_REG = 1.0
 DELTA = 0.05
 S_BOUND = np.linalg.norm(THETA_STAR)
-
 N_RUNS = 30
 BASE_SEED = 2026
 
-
 POLICY_NAMES = ["Rare-switching OFUL", "Frequent-update feasible OFUL", "Unconstrained OFUL"]
-
 
 POLICY_COLORS = {
     "Rare-switching OFUL": COLORS["blue"],
     "Frequent-update feasible OFUL": COLORS["orange"],
     "Unconstrained OFUL": COLORS["red"],
 }
-
 
 POLICY_MARKERS = {
     "Rare-switching OFUL": "o",
@@ -103,14 +93,17 @@ def transition_path(z,z_next,w,rho):
 
 def count_window_violations(actions,w,rho,tolerance=1e-8):
     T_current=len(actions)
+
     if T_current<w:
         return 0
+    
     adjacent_distances=np.sum(np.abs(actions[1:]-actions[:-1]),axis=1)
     adjacent_windows=np.lib.stride_tricks.sliding_window_view(adjacent_distances,w-1)
     maximum_adjacent=np.max(adjacent_windows,axis=1)
     cyclic_distances=np.sum(np.abs(actions[w-1:]-actions[:T_current-w+1]),axis=1)
     maximum_window_distance=np.maximum(maximum_adjacent,cyclic_distances)
     violations=np.sum(maximum_window_distance>rho+tolerance)
+
     return int(violations)
 
 
@@ -136,7 +129,6 @@ def run_rare_switching_oful(noise, rho, theta_star=THETA_STAR, w=W, lambda_reg=L
 
         if previous_target is not None and not np.allclose(z, previous_target, atol=1e-12, rtol=0.0):
             target_switches += 1
-
             path = transition_path(z=previous_target, z_next=z, w=w, rho=rho)
 
             for action in path:
@@ -144,14 +136,8 @@ def run_rare_switching_oful(noise, rho, theta_star=THETA_STAR, w=W, lambda_reg=L
                     break
 
                 actions[t] = action
-
                 reward = np.dot(theta_star, action) + noise[t]
-
                 pseudo_regret += optimal_reward - np.dot(theta_star, action)
-
-                V += np.outer(action, action)
-                b += reward * action
-
                 transition_rounds += 1
                 t += 1
 
@@ -171,14 +157,10 @@ def run_rare_switching_oful(noise, rho, theta_star=THETA_STAR, w=W, lambda_reg=L
 
             action = z
             actions[t] = action
-
             reward = np.dot(theta_star, action) + noise[t]
-
             pseudo_regret += optimal_reward - np.dot(theta_star, action)
-
             V += np.outer(action, action)
             b += reward * action
-
             stationary_rounds += 1
             t += 1
 
@@ -198,77 +180,43 @@ def run_rare_switching_oful(noise, rho, theta_star=THETA_STAR, w=W, lambda_reg=L
 def run_frequent_update_feasible_oful(noise, rho, theta_star=THETA_STAR, w=W, lambda_reg=LAMBDA_REG, delta=DELTA):
     T_current = len(noise)
     d = len(theta_star)
-
     V = lambda_reg * np.eye(d)
     b = np.zeros(d)
-
     actions = np.zeros((T_current, d))
-
     optimal_reward = np.max(theta_star)
-
     pseudo_regret = 0.0
     target_switches = 0
     transition_rounds = 0
-
     t = 0
 
-    z, _ = optimistic_simplex_action(
-        V=V,
-        b=b,
-        lambda_reg=lambda_reg,
-        delta=delta
-    )
-
+    z, _ = optimistic_simplex_action(V=V, b=b, lambda_reg=lambda_reg, delta=delta)
     initial_rounds = min(w - 1, T_current)
 
     for _ in range(initial_rounds):
         action = z
         actions[t] = action
-
         reward = np.dot(theta_star, action) + noise[t]
-
         pseudo_regret += optimal_reward - np.dot(theta_star, action)
-
         V += np.outer(action, action)
         b += reward * action
-
         t += 1
-
     previous_target = z.copy()
 
     while t < T_current:
-
-        z, _ = optimistic_simplex_action(
-            V=V,
-            b=b,
-            lambda_reg=lambda_reg,
-            delta=delta
-        )
+        z, _ = optimistic_simplex_action(V=V, b=b, lambda_reg=lambda_reg, delta=delta)
 
         if not np.allclose(z, previous_target, atol=1e-12, rtol=0.0):
-
             target_switches += 1
 
-            path = transition_path(
-                z=previous_target,
-                z_next=z,
-                w=w,
-                rho=rho
-            )
+            path = transition_path(z=previous_target, z_next=z, w=w, rho=rho)
 
             for action in path:
                 if t >= T_current:
                     break
 
                 actions[t] = action
-
                 reward = np.dot(theta_star, action) + noise[t]
-
                 pseudo_regret += optimal_reward - np.dot(theta_star, action)
-
-                V += np.outer(action, action)
-                b += reward * action
-
                 transition_rounds += 1
                 t += 1
 
@@ -277,23 +225,14 @@ def run_frequent_update_feasible_oful(noise, rho, theta_star=THETA_STAR, w=W, la
 
         action = z
         actions[t] = action
-
         reward = np.dot(theta_star, action) + noise[t]
-
         pseudo_regret += optimal_reward - np.dot(theta_star, action)
-
         V += np.outer(action, action)
         b += reward * action
-
         t += 1
-
         previous_target = z.copy()
 
-    violations = count_window_violations(
-        actions=actions,
-        w=w,
-        rho=rho
-    )
+    violations = count_window_violations(actions=actions, w=w, rho=rho)
 
     return {
         "regret": float(pseudo_regret),
@@ -306,47 +245,28 @@ def run_frequent_update_feasible_oful(noise, rho, theta_star=THETA_STAR, w=W, la
 def run_unconstrained_oful(noise, rho, theta_star=THETA_STAR, w=W, lambda_reg=LAMBDA_REG, delta=DELTA):
     T_current = len(noise)
     d = len(theta_star)
-
     V = lambda_reg * np.eye(d)
     b = np.zeros(d)
-
     actions = np.zeros((T_current, d))
-
     optimal_reward = np.max(theta_star)
-
     pseudo_regret = 0.0
     target_switches = 0
-
     previous_index = None
 
     for t in range(T_current):
-
-        z, index = optimistic_simplex_action(
-            V=V,
-            b=b,
-            lambda_reg=lambda_reg,
-            delta=delta
-        )
+        z, index = optimistic_simplex_action(V=V, b=b, lambda_reg=lambda_reg, delta=delta)
 
         if previous_index is not None and index != previous_index:
             target_switches += 1
 
         actions[t] = z
-
         reward = np.dot(theta_star, z) + noise[t]
-
         pseudo_regret += optimal_reward - np.dot(theta_star, z)
-
         V += np.outer(z, z)
         b += reward * z
-
         previous_index = index
 
-    violations = count_window_violations(
-        actions=actions,
-        w=w,
-        rho=rho
-    )
+    violations = count_window_violations(actions=actions, w=w, rho=rho)
 
     return {
         "regret": float(pseudo_regret),
@@ -358,14 +278,7 @@ def run_unconstrained_oful(noise, rho, theta_star=THETA_STAR, w=W, lambda_reg=LA
 
 def run_rare_switching_experiment(n_runs=N_RUNS, seed=BASE_SEED):
     metrics = ["regret", "switches", "transition_rounds", "violations"]
-
-    results = {
-        policy: {
-            metric: np.zeros((len(RHO_VALUES), n_runs))
-            for metric in metrics
-        }
-        for policy in POLICY_NAMES
-    }
+    results = {policy: {metric: np.zeros((len(RHO_VALUES), n_runs)) for metric in metrics} for policy in POLICY_NAMES}
 
     for run in tqdm(range(n_runs), desc="Runs"):
         rng = np.random.default_rng(seed + run)
@@ -391,107 +304,40 @@ def run_rare_switching_experiment(n_runs=N_RUNS, seed=BASE_SEED):
     return results
 
 
-def mean_and_ci(
-    values
-):
-
-    mean = np.mean(
-        values,
-        axis=1
-    )
+def mean_and_ci(values):
+    mean = np.mean(values, axis=1)
 
     if values.shape[1] == 1:
-
-        ci = np.zeros_like(
-            mean
-        )
+        ci = np.zeros_like(mean)
 
     else:
-
-        standard_error = (
-            np.std(
-                values,
-                axis=1,
-                ddof=1
-            )
-            / np.sqrt(
-                values.shape[1]
-            )
-        )
-
-        ci = (
-            1.96
-            * standard_error
-        )
+        standard_error = (np.std(values, axis=1, ddof=1) / np.sqrt(values.shape[1]))
+        ci = 1.96 * standard_error
 
     return mean, ci
 
 
-def print_experiment_summary(
-    results
-):
+def print_experiment_summary(results):
+    metrics = ["regret", "switches", "transition_rounds", "violations"]
 
-    metrics = [
-        "regret",
-        "switches",
-        "transition_rounds",
-        "violations"
-    ]
-
-    for rho_index, rho in enumerate(
-        RHO_VALUES
-    ):
-
-        print(
-            f"\nrho = {rho}"
-        )
-
-        print(
-            "-" * 90
-        )
+    for rho_index, rho in enumerate(RHO_VALUES):
+        print(f"\nrho = {rho}")
+        print("-" * 90)
 
         for policy in POLICY_NAMES:
-
             values = []
 
             for metric in metrics:
-
-                data = (
-                    results[
-                        policy
-                    ][
-                        metric
-                    ][
-                        rho_index
-                    ]
-                )
-
-                mean = np.mean(
-                    data
-                )
+                data = (results[policy][metric][rho_index])
+                mean = np.mean(data)
 
                 if len(data) > 1:
-
-                    ci = (
-                        1.96
-                        * np.std(
-                            data,
-                            ddof=1
-                        )
-                        / np.sqrt(
-                            len(data)
-                        )
-                    )
+                    ci = (1.96 * np.std(data, ddof=1) / np.sqrt(len(data)))
 
                 else:
                     ci = 0.0
 
-                values.append(
-                    (
-                        mean,
-                        ci
-                    )
-                )
+                values.append((mean, ci))
 
             print(
                 f"{policy:32s} | "
@@ -510,9 +356,7 @@ def print_experiment_summary(
             )
 
 
-def plot_rare_switching_experiment(
-    results
-):
+def plot_rare_switching_experiment(results):
 
     metric_info = [
         (
@@ -568,24 +412,6 @@ def plot_rare_switching_experiment(
                 ]
             )
 
-            # ax.errorbar(
-            #     x,
-            #     mean,
-            #     yerr=ci,
-            #     color=POLICY_COLORS[
-            #         policy
-            #     ],
-            #     marker=POLICY_MARKERS[
-            #         policy
-            #     ],
-            #     markersize=7,
-            #     linewidth=2.1,
-            #     capsize=3,
-            #     capthick=1.0,
-            #     markeredgecolor="white",
-            #     markeredgewidth=0.7,
-            #     label=policy
-            # )
             ax.plot(
                 x,
                 mean,
@@ -693,7 +519,7 @@ def plot_rare_switching_experiment(
     )
 
     fig.savefig(
-        "imgs/experiment2_rare_switching_combined.png",
+        "imgs/reachability.png",
         dpi=300,
         bbox_inches="tight"
     )
