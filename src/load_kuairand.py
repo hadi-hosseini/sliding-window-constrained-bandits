@@ -6,34 +6,15 @@ import duckdb
 
 DATA_DIR = Path("/home/hadi/CRLT/dataset/KuaiRand-1K/data")
 CATEGORY_FILE = Path("/home/hadi/CRLT/dataset/KuaiRand-1K/kuairand_video_categories.csv")
-
 OUTPUT_DIR = Path("./kuairand_processed")
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-
 K = 8
 REWARD = "is_click"
 SMOOTHING = 20.0
-
 log_files = sorted(DATA_DIR.glob("log_*_1k.csv"))
-
-
-required_columns = [
-    "user_id",
-    "video_id",
-    "time_ms",
-    "is_click",
-]
-
-
-# Optional columns
-optional_columns = [
-    "long_view",
-    "is_rand",
-]
-
+required_columns = ["user_id", "video_id", "time_ms", "is_click"]
+optional_columns = ["long_view", "is_rand"]
 usecols = required_columns + [c for c in optional_columns]
-
-
 frames = []
 
 for path in log_files:
