@@ -3,14 +3,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from tqdm import tqdm
 
-from rare_switching import (
-    THETA_STAR,
-    W,
-    T,
-    RHO,
-    NOISE_STD,
-    run_rare_switching_oful,
-)
+from rare_switching import (THETA_STAR, W, T, RHO, NOISE_STD, run_rare_switching_oful)
 
 os.makedirs("imgs", exist_ok=True)
 
@@ -30,7 +23,6 @@ W_VALUES = [2, 4, 8, 16, 32]
 ALPHA = 2.0
 N_RUNS = 30
 SEED = 42
-
 NUM_BLOCKS = T // W
 
 def horizon_for_window(w):
@@ -52,60 +44,26 @@ def mean_and_ci(values):
     return mean, 1.96 * se
 
 def run_window_ablation():
-    metrics = [
-        "regret",
-        "switches",
-        "transition_rounds",
-        "transition_per_switch",
-        "violations",
-    ]
+    metrics = ["regret", "switches", "transition_rounds", "transition_per_switch", "violations"]
+    results = {w: {metric: np.zeros(N_RUNS) for metric in metrics} for w in W_VALUES}
+    max_horizon = max(horizon_for_window(w) for w in W_VALUES)
 
-    results = {
-        w: {
-            metric: np.zeros(N_RUNS)
-            for metric in metrics
-        }
-        for w in W_VALUES
-    }
-
-    max_horizon = max(
-        horizon_for_window(w)
-        for w in W_VALUES
-    )
-
-    for run in tqdm(
-        range(N_RUNS),
-        desc="Window-length ablation",
-    ):
+    for run in tqdm(range(N_RUNS), desc="Window-length ablation"):
         rng = np.random.default_rng(SEED + run)
-
-        full_noise = rng.normal(
-            0.0,
-            NOISE_STD,
-            max_horizon,
-        )
+        full_noise = rng.normal(0.0, NOISE_STD, max_horizon)
 
         for w in W_VALUES:
             horizon = horizon_for_window(w)
             noise = full_noise[:horizon]
 
-            result = run_rare_switching_oful(
-                noise=noise,
-                rho=RHO,
-                alpha=ALPHA,
-                theta_star=THETA_STAR,
-                w=w,
-            )
-
+            result = run_rare_switching_oful(noise=noise, rho=RHO, alpha=ALPHA, theta_star=THETA_STAR, w=w)
             results[w]["regret"][run] = result["regret"]
             results[w]["switches"][run] = result["switches"]
             results[w]["transition_rounds"][run] = result["transition_rounds"]
             results[w]["violations"][run] = result["violations"]
 
             if result["switches"] > 0:
-                results[w]["transition_per_switch"][run] = (
-                    result["transition_rounds"] / result["switches"]
-                )
+                results[w]["transition_per_switch"][run] = (result["transition_rounds"] / result["switches"])
             else:
                 results[w]["transition_per_switch"][run] = np.nan
 
@@ -116,22 +74,11 @@ def print_results(results):
 
     for w in W_VALUES:
         horizon = horizon_for_window(w)
-
-        regret, regret_ci = mean_and_ci(
-            results[w]["regret"]
-        )
-        switches, switches_ci = mean_and_ci(
-            results[w]["switches"]
-        )
-        transitions, transitions_ci = mean_and_ci(
-            results[w]["transition_rounds"]
-        )
-        cost_per_switch, cost_per_switch_ci = mean_and_ci(
-            results[w]["transition_per_switch"]
-        )
-        violations, violations_ci = mean_and_ci(
-            results[w]["violations"]
-        )
+        regret, regret_ci = mean_and_ci(results[w]["regret"])
+        switches, switches_ci = mean_and_ci(results[w]["switches"])
+        transitions, transitions_ci = mean_and_ci(results[w]["transition_rounds"])
+        cost_per_switch, cost_per_switch_ci = mean_and_ci(results[w]["transition_per_switch"])
+        violations, violations_ci = mean_and_ci(results[w]["violations"])
 
         print(
             f"w={w:2d} | "
@@ -148,9 +95,7 @@ def collect_plot_data(results, metric):
     cis = []
 
     for w in W_VALUES:
-        mean, ci = mean_and_ci(
-            results[w][metric]
-        )
+        mean, ci = mean_and_ci(results[w][metric])
         means.append(mean)
         cis.append(ci)
 

@@ -3,11 +3,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from tqdm import tqdm
 
-from rare_switching import (
-    W, T, RHO, NOISE_STD, LAMBDA_REG, DELTA,
-    optimistic_simplex_action, transition_path,
-    count_window_violations,
-)
+from rare_switching import (W, T, RHO, NOISE_STD, LAMBDA_REG, DELTA, optimistic_simplex_action, transition_path, count_window_violations)
 
 os.makedirs("imgs", exist_ok=True)
 
@@ -141,10 +137,7 @@ def mean_and_ci(values):
 
 def run_ablation():
     metrics = ["regret", "switches", "transition_rounds", "violations"]
-    results = {
-        d: {metric: np.zeros(N_RUNS) for metric in metrics}
-        for d in D_VALUES
-    }
+    results = {d: {metric: np.zeros(N_RUNS) for metric in metrics} for d in D_VALUES}
 
     for run in tqdm(range(N_RUNS), desc="Action-dimension ablation"):
         rng = np.random.default_rng(SEED + run)
