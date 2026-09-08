@@ -201,339 +201,81 @@ def build_state_model():
     }
 
 
-STATE_MODEL = (
-    build_state_model()
-)
+STATE_MODEL = (build_state_model())
 
-
-# ============================================================
-# Confidence sets
-# ============================================================
-
-def confidence_radius(
-    V,
-    lambda_reg=LAMBDA_REG,
-    noise_scale=NOISE_STD,
-    theta_bound=S_BOUND,
-    delta=DELTA,
-):
-
+def confidence_radius(V, lambda_reg=LAMBDA_REG, noise_scale=NOISE_STD, theta_bound=S_BOUND, delta=DELTA):
     d = V.shape[0]
-
-    sign, logdet_v = (
-        np.linalg.slogdet(V)
-    )
+    sign, logdet_v = (np.linalg.slogdet(V))
 
     if sign <= 0:
-        raise ValueError(
-            "V must be positive definite."
-        )
+        raise ValueError("V must be positive definite.")
 
-    logdet_initial = (
-        d
-        *
-        np.log(
-            lambda_reg
-        )
-    )
-
-    log_term = (
-        0.5
-        *
-        (
-            logdet_v
-            -
-            logdet_initial
-        )
-        +
-        np.log(
-            1.0 / delta
-        )
-    )
-
-    beta = (
-        noise_scale
-        *
-        np.sqrt(
-            max(
-                0.0,
-                2.0 * log_term
-            )
-        )
-        +
-        np.sqrt(
-            lambda_reg
-        )
-        *
-        theta_bound
-    )
-
-    return float(
-        beta
-    )
+    logdet_initial = (d * np.log(lambda_reg))
+    log_term = (0.5 * (logdet_v - logdet_initial) + np.log(1.0 / delta))
+    beta = (noise_scale * np.sqrt(max(0.0, 2.0 * log_term)) + np.sqrt(lambda_reg) * theta_bound)
+    return float(beta)
 
 
-def optimistic_rewards(
-    V,
-    b,
-):
+def optimistic_rewards(V, b):
+    theta_hat = (np.linalg.solve(V, b))
+    beta = (confidence_radius(V=V))
+    V_inv = np.linalg.inv(V)
+    values = np.zeros(len(ACTIONS))
 
-    theta_hat = (
-        np.linalg.solve(
-            V,
-            b
-        )
-    )
+    for action_index, action in enumerate(ACTIONS):
+        bonus = (beta * np.sqrt(max(0.0, action @ V_inv @ action)))
+        values[action_index] = (theta_hat @ action + bonus)
 
-    beta = (
-        confidence_radius(
-            V=V
-        )
-    )
-
-    V_inv = np.linalg.inv(
-        V
-    )
-
-    values = np.zeros(
-        len(ACTIONS)
-    )
-
-    for action_index, action in enumerate(
-        ACTIONS
-    ):
-
-        bonus = (
-            beta
-            *
-            np.sqrt(
-                max(
-                    0.0,
-                    action
-                    @ V_inv
-                    @ action
-                )
-            )
-        )
-
-        values[
-            action_index
-        ] = (
-            theta_hat @ action
-            +
-            bonus
-        )
-
-    # Clipped optimistic reward
-    values = np.clip(
-        values,
-        -REWARD_BOUND,
-        REWARD_BOUND
-    )
-
+    values = np.clip(values, -REWARD_BOUND, REWARD_BOUND)
     return values
 
 
-# ============================================================
-# Exact finite-horizon Bellman planning
-# ============================================================
+def bellman_table(stage_rewards, horizon):
+    n_states = (STATE_MODEL["n_states"])
+    safe_next_state = (STATE_MODEL["safe_next_state"])
+    values = np.full((horizon + 1, n_states), -np.inf)
+    policy = np.full((horizon + 1, n_states), -1, dtype=np.int8)
+    values[0, :] = 0.0
 
-def bellman_table(
-    stage_rewards,
-    horizon,
-):
+    for n in range(1, horizon + 1):
+        previous = np.concatenate([values[n - 1], np.array([-np.inf])])
+        q_values = (stage_rewards[None, :] + previous[safe_next_state])
+        policy[n] = np.argmax(q_values, axis=1)
+        values[n] = np.max(q_values, axis=1)
 
-    n_states = (
-        STATE_MODEL[
-            "n_states"
-        ]
-    )
+    return (values, policy)
 
-    safe_next_state = (
-        STATE_MODEL[
-            "safe_next_state"
-        ]
-    )
-
-    values = np.full(
-        (
-            horizon + 1,
-            n_states
-        ),
-        -np.inf
-    )
-
-    policy = np.full(
-        (
-            horizon + 1,
-            n_states
-        ),
-        -1,
-        dtype=np.int8
-    )
-
-    values[
-        0,
-        :
-    ] = 0.0
-
-    for n in range(
-        1,
-        horizon + 1
-    ):
-
-        previous = np.concatenate([
-            values[
-                n - 1
-            ],
-            np.array([
-                -np.inf
-            ])
-        ])
-
-        q_values = (
-            stage_rewards[
-                None,
-                :
-            ]
-            +
-            previous[
-                safe_next_state
-            ]
-        )
-
-        policy[
-            n
-        ] = np.argmax(
-            q_values,
-            axis=1
-        )
-
-        values[
-            n
-        ] = np.max(
-            q_values,
-            axis=1
-        )
-
-    return (
-        values,
-        policy
-    )
-
-
-# ============================================================
-# Offline benchmark
-# ============================================================
 
 @lru_cache(maxsize=None)
-def offline_optimum(
-    T
-):
-
-    values, _ = (
-        bellman_table(
-            stage_rewards=TRUE_REWARDS,
-            horizon=int(T)
-        )
-    )
-
-    empty_state = (
-        STATE_MODEL[
-            "empty_state"
-        ]
-    )
-
-    return float(
-        values[
-            int(T),
-            empty_state
-        ]
-    )
-
-
-# ============================================================
-# Viability table
-# ============================================================
+def offline_optimum(T):
+    values, _ = (bellman_table(stage_rewards=TRUE_REWARDS, horizon=int(T)))
+    empty_state = (STATE_MODEL["empty_state"])
+    return float(values[int(T), empty_state])
 
 @lru_cache(maxsize=None)
-def viability_values(
-    T
-):
-
-    values, _ = (
-        bellman_table(
-            stage_rewards=np.zeros(
-                len(ACTIONS)
-            ),
-            horizon=int(T)
-        )
-    )
-
+def viability_values(T):
+    values, _ = (bellman_table(stage_rewards=np.zeros(len(ACTIONS)), horizon=int(T)))
     return values
 
 
-# ============================================================
-# Constraint checks
-# ============================================================
-
-def count_window_violations(
-    action_indices,
-    tolerance=1e-10,
-):
-
-    if len(
-        action_indices
-    ) < W:
+def count_window_violations(action_indices, tolerance=1e-10):
+    if len(action_indices) < W:
         return 0
 
     violations = 0
+    for t in range(W - 1, len(action_indices)):
+        window = (action_indices[t - W + 1:t + 1])
+        costs = np.array([ACTION_COSTS[index] for index in window])
+        weighted_cost = np.dot(POSITION_WEIGHTS, costs)
 
-    for t in range(
-        W - 1,
-        len(
-            action_indices
-        )
-    ):
-
-        window = (
-            action_indices[
-                t - W + 1:
-                t + 1
-            ]
-        )
-
-        costs = np.array([
-            ACTION_COSTS[index]
-            for index in window
-        ])
-
-        weighted_cost = np.dot(
-            POSITION_WEIGHTS,
-            costs
-        )
-
-        if (
-            weighted_cost
-            >
-            BUDGET + tolerance
-        ):
+        if (weighted_cost > BUDGET + tolerance):
             violations += 1
 
-    return int(
-        violations
-    )
+    return int(violations)
 
 
-def assert_feasible(
-    action_indices,
-):
-
-    violations = (
-        count_window_violations(
-            action_indices
-        )
-    )
+def assert_feasible(action_indices):
+    violations = (count_window_violations(action_indices))
 
     if violations != 0:
         raise RuntimeError(
@@ -542,88 +284,30 @@ def assert_feasible(
         )
 
 
-# ============================================================
-# Rare-update optimistic planning
-# ============================================================
 
-def run_rare_update_planning(
-    noise,
-):
-
-    T = len(
-        noise
-    )
-
-    V = (
-        LAMBDA_REG
-        *
-        np.eye(D)
-    )
-
-    b = np.zeros(
-        D
-    )
-
-    state = (
-        STATE_MODEL[
-            "empty_state"
-        ]
-    )
-
-    next_state = (
-        STATE_MODEL[
-            "next_state"
-        ]
-    )
-
+def run_rare_update_planning(noise):
+    T = len(noise)
+    V = (LAMBDA_REG * np.eye(D))
+    b = np.zeros(D)
+    state = (STATE_MODEL["empty_state"])
+    next_state = (STATE_MODEL["next_state"])
     action_indices = []
-
     total_true_reward = 0.0
-
     t = 0
     n_updates = 0
 
     while t < T:
 
-        # Freeze episode statistics.
-        _, episode_logdet = (
-            np.linalg.slogdet(V)
-        )
-
-        optimistic = (
-            optimistic_rewards(
-                V=V,
-                b=b
-            )
-        )
-
-        remaining_at_start = (
-            T - t
-        )
-
-        # Exact optimistic remaining-horizon plan.
-        _, policy = (
-            bellman_table(
-                stage_rewards=optimistic,
-                horizon=remaining_at_start
-            )
-        )
-
+        _, episode_logdet = (np.linalg.slogdet(V))
+        optimistic = (optimistic_rewards(V=V, b=b))
+        remaining_at_start = (T - t)
+        _, policy = (bellman_table(stage_rewards=optimistic, horizon=remaining_at_start))
         n_updates += 1
 
         while t < T:
+            _, current_logdet = (np.linalg.slogdet(V))
 
-            _, current_logdet = (
-                np.linalg.slogdet(V)
-            )
-
-            # Determinant-doubling update rule.
-            if (
-                current_logdet
-                >
-                episode_logdet
-                +
-                np.log(2.0)
+            if (current_logdet > episode_logdet + np.log(2.0)
                 +
                 1e-12
             ):
@@ -723,9 +407,6 @@ def run_rare_update_planning(
     }
 
 
-# ============================================================
-# Myopic feasible OFUL
-# ============================================================
 
 def run_myopic_feasible_oful(
     noise,
@@ -931,9 +612,6 @@ def run_myopic_feasible_oful(
     }
 
 
-# ============================================================
-# Stationary feasible actions
-# ============================================================
 
 def stationary_action_indices():
 
@@ -967,143 +645,50 @@ def stationary_action_indices():
     return stationary
 
 
-STATIONARY_ACTIONS = (
-    stationary_action_indices()
-)
+STATIONARY_ACTIONS = (stationary_action_indices())
 
 
-# ============================================================
-# Stationary OFUL baseline
-# ============================================================
-
-def run_stationary_oful(
-    noise,
-):
-
-    T = len(
-        noise
-    )
-
-    V = (
-        LAMBDA_REG
-        *
-        np.eye(D)
-    )
-
-    b = np.zeros(
-        D
-    )
-
+def run_stationary_oful(noise):
+    T = len(noise)
+    V = (LAMBDA_REG * np.eye(D))
+    b = np.zeros(D)
     action_indices = []
-
     total_true_reward = 0.0
-
     t = 0
     n_updates = 0
 
     while t < T:
 
-        _, episode_logdet = (
-            np.linalg.slogdet(V)
-        )
-
-        optimistic = (
-            optimistic_rewards(
-                V=V,
-                b=b
-            )
-        )
-
-        action_index = max(
-            STATIONARY_ACTIONS,
-            key=lambda index:
-                optimistic[index]
-        )
-
-        action = (
-            ACTIONS[
-                action_index
-            ]
-        )
-
+        _, episode_logdet = (np.linalg.slogdet(V))
+        optimistic = (optimistic_rewards(V=V, b=b))
+        action_index = max(STATIONARY_ACTIONS, key=lambda index:optimistic[index])
+        action = (ACTIONS[action_index])
         n_updates += 1
 
         while t < T:
+            _, current_logdet = (np.linalg.slogdet(V))
 
-            _, current_logdet = (
-                np.linalg.slogdet(V)
-            )
-
-            if (
-                current_logdet
-                >
-                episode_logdet
-                +
-                np.log(2.0)
-                +
-                1e-12
-            ):
+            if (current_logdet > episode_logdet + np.log(2.0) + 1e-12):
                 break
 
-            action_indices.append(
-                action_index
-            )
-
-            true_reward = (
-                THETA_STAR
-                @ action
-            )
-
-            observation = (
-                true_reward
-                +
-                noise[t]
-            )
-
-            total_true_reward += (
-                true_reward
-            )
-
-            V += np.outer(
-                action,
-                action
-            )
-
-            b += (
-                action
-                *
-                observation
-            )
-
+            action_indices.append(action_index)
+            true_reward = (THETA_STAR @ action)
+            observation = (true_reward + noise[t])
+            total_true_reward += (true_reward)
+            V += np.outer(action, action)
+            b += (action * observation)
             t += 1
 
-    assert_feasible(
-        action_indices
-    )
-
-    offline_value = (
-        offline_optimum(T)
-    )
-
-    regret = (
-        offline_value
-        -
-        total_true_reward
-    )
+    assert_feasible(action_indices)
+    offline_value = (offline_optimum(T))
+    regret = (offline_value - total_true_reward)
 
     return {
-        "regret":
-            float(regret),
-        "normalized_regret":
-            float(regret / T),
-        "updates":
-            int(n_updates),
+        "regret": float(regret),
+        "normalized_regret": float(regret / T),
+        "updates": int(n_updates),
     }
 
-
-# ============================================================
-# Problem summary
-# ============================================================
 
 def print_problem_summary():
 
@@ -1189,166 +774,47 @@ def print_problem_summary():
         )
 
 
-# ============================================================
-# Run experiment
-# ============================================================
 
-def run_planning_experiment(
-    n_runs=N_RUNS,
-    seed=BASE_SEED,
-):
+def run_planning_experiment(n_runs=N_RUNS, seed=BASE_SEED):
+    metrics = ["normalized_regret", "updates"]
+    results = {policy: {metric: np.zeros((len(T_VALUES), n_runs)) for metric in metrics} for policy in POLICY_NAMES}
+    max_horizon = int(np.max(T_VALUES))
 
-    # Only these two quantities are reported/plotted.
-    metrics = [
-        "normalized_regret",
-        "updates",
-    ]
+    for run in tqdm(range(n_runs), desc="Runs"):
+        rng = (np.random.default_rng(seed + run))
+        full_noise = (rng.normal(loc=0.0, scale=NOISE_STD, size=max_horizon))
 
-    results = {
-        policy: {
-            metric:
-                np.zeros(
-                    (
-                        len(T_VALUES),
-                        n_runs
-                    )
-                )
-            for metric in metrics
-        }
-        for policy in POLICY_NAMES
-    }
-
-    max_horizon = int(
-        np.max(
-            T_VALUES
-        )
-    )
-
-    for run in tqdm(
-        range(n_runs),
-        desc="Runs"
-    ):
-
-        rng = (
-            np.random.default_rng(
-                seed + run
-            )
-        )
-
-        # Shared noise across policies
-        # and horizon prefixes.
-        full_noise = (
-            rng.normal(
-                loc=0.0,
-                scale=NOISE_STD,
-                size=max_horizon
-            )
-        )
-
-        for horizon_index, T in enumerate(
-            T_VALUES
-        ):
-
+        for horizon_index, T in enumerate(T_VALUES):
             T = int(T)
-
-            noise = (
-                full_noise[
-                    :T
-                ]
-            )
-
-            planning_result = (
-                run_rare_update_planning(
-                    noise=noise
-                )
-            )
-
-            myopic_result = (
-                run_myopic_feasible_oful(
-                    noise=noise
-                )
-            )
-
-            stationary_result = (
-                run_stationary_oful(
-                    noise=noise
-                )
-            )
+            noise = (full_noise[:T])
+            planning_result = (run_rare_update_planning(noise=noise))
+            myopic_result = (run_myopic_feasible_oful(noise=noise))
+            stationary_result = (run_stationary_oful(noise=noise))
 
             policy_results = {
-                "Rare-update optimistic planning":
-                    planning_result,
-                "Myopic feasible OFUL":
-                    myopic_result,
-                "Stationary OFUL":
-                    stationary_result,
+                "Rare-update optimistic planning": planning_result,
+                "Myopic feasible OFUL": myopic_result,
+                "Stationary OFUL": stationary_result,
             }
 
             for policy in POLICY_NAMES:
-
                 for metric in metrics:
-
-                    results[
-                        policy
-                    ][
-                        metric
-                    ][
-                        horizon_index,
-                        run
-                    ] = (
-                        policy_results[
-                            policy
-                        ][
-                            metric
-                        ]
-                    )
+                    results[policy][metric][horizon_index, run] = (policy_results[policy][metric])
 
     return results
 
 
-# ============================================================
-# Statistics
-# ============================================================
-
-def mean_and_ci(
-    values
-):
-
-    mean = np.mean(
-        values,
-        axis=1
-    )
+def mean_and_ci(values):
+    mean = np.mean(values, axis=1)
 
     if values.shape[1] == 1:
-
-        ci = np.zeros_like(
-            mean
-        )
+        ci = np.zeros_like(mean)
 
     else:
+        standard_error = (np.std(values, axis=1, ddof=1) / np.sqrt(values.shape[1]))
+        ci = (1.96 * standard_error)
 
-        standard_error = (
-            np.std(
-                values,
-                axis=1,
-                ddof=1
-            )
-            /
-            np.sqrt(
-                values.shape[1]
-            )
-        )
-
-        ci = (
-            1.96
-            *
-            standard_error
-        )
-
-    return (
-        mean,
-        ci
-    )
+    return (mean, ci)
 
 
 def print_experiment_summary(results):
