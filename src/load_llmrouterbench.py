@@ -102,3 +102,55 @@ print("Models:", df.model.nunique())
 print("Feature dimension:", len(df.iloc[0]["feature"]))
 df.to_csv(OUTPUT_CSV, index=False)
 print("Saved:", OUTPUT_CSV)
+
+
+
+
+# separate the features from the csv to make it faster
+
+# import pandas as pd
+# import ast
+# import numpy as np
+
+
+# CSV_FILE = "/home/hadi/CRLT/llmrouting_processed/llmrouterbench_features.csv"
+# FEATURE_FILE = "/home/hadi/CRLT/llmrouting_processed/features.npy"
+
+# df = pd.read_csv(CSV_FILE)
+# features = np.array([ast.literal_eval(x) for x in df["feature"]], dtype=np.float32)
+# np.save(FEATURE_FILE, features)
+# print("Saved:", FEATURE_FILE)
+# print("Shape:", features.shape)
+
+
+
+
+
+# remove the quries that their response is not exist for 6 models
+
+# import pandas as pd
+# import ast
+# import numpy as np
+
+
+# INPUT_CSV = "/home/hadi/CRLT/llmrouting_processed/llmrouterbench_features.csv"
+# OUTPUT_CSV = "/home/hadi/CRLT/llmrouting_processed/llmrouterbench_final.csv"
+# FEATURE_FILE = "/home/hadi/CRLT/llmrouting_processed/features.npy"
+
+# df = pd.read_csv(INPUT_CSV)
+# K = 6
+# query_model_count = (df.groupby("query_id").model.nunique())
+# valid_queries = query_model_count[query_model_count == K].index
+# df = df[df.query_id.isin(valid_queries)]
+# df.to_csv(OUTPUT_CSV, index=False)
+
+# print("Remaining queries:", df.query_id.nunique())
+# print("Remaining rows:", len(df))
+# print("Models per query:")
+# print(df.groupby("query_id").model.nunique().describe())
+
+# features = np.array([ast.literal_eval(x) for x in df["feature"]], dtype=np.float32)
+# np.save(FEATURE_FILE, features)
+
+# print("Saved feature file:", FEATURE_FILE)
+# print("Feature shape:", features.shape)
