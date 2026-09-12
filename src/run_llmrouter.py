@@ -4,276 +4,91 @@ import pandas as pd
 from tqdm import tqdm
 
 
-CSV_FILE = Path(
-    "/home/hadi/CRLT/llmrouting_processed/"
-    "llmrouterbench_final.csv"
-)
-
-FEATURE_FILE = Path(
-    "/home/hadi/CRLT/llmrouting_processed/"
-    "features.npy"
-)
-
-
-OUTPUT_DIR = Path(
-    "./llmrouter_results"
-)
-
-OUTPUT_DIR.mkdir(
-    parents=True,
-    exist_ok=True
-)
-
+CSV_FILE = Path("/home/hadi/CRLT/llmrouting_processed/llmrouterbench_final.csv")
+FEATURE_FILE = Path("/home/hadi/CRLT/llmrouting_processed/features.npy")
+OUTPUT_DIR = Path("./llmrouter_results")
+OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
 W = 5
-
-
-BUDGET_VALUES = [
-    0.15,
-    0.10,
-    0.08,
-    0.06,
-    0.04
-]
-
-
-T_VALUES = [
-    50,
-    100,
-    250,
-    500,
-    750,
-    1000
-]
-
-
+BUDGET_VALUES = [0.15, 0.10, 0.08, 0.06, 0.04]
+T_VALUES = [50, 100, 250, 500, 750, 1000]
 N_RUNS = 10
-
-
 LAMBDA_REG = 1.0
-
 DELTA = 0.05
-
 NOISE_R = 0.5
-
 DET_FACTOR = 2.0
-
 SEED = 42
+POLICIES = ["Rare-Update Optimistic Planning", "Myopic Feasible OFUL", "Unconstrained OFUL"]
 
-
-POLICIES = [
-    "Rare-Update Optimistic Planning",
-    "Myopic Feasible OFUL",
-    "Unconstrained OFUL"
-]
-
-
-
-df = pd.read_csv(
-    CSV_FILE
-)
-
-
-feature_matrix = np.load(
-    FEATURE_FILE
-)
-
-
-assert len(df) == len(feature_matrix)
-
-
-
-models = sorted(
-    df.model.unique()
-)
-
-
+df = pd.read_csv(CSV_FILE)
+feature_matrix = np.load(FEATURE_FILE)
+models = sorted(df.model.unique())
 K = len(models)
-
 d = feature_matrix.shape[1]
 
-
-print(
-    "Models:",
-    models
-)
-
-print(
-    "K:",
-    K
-)
-
-print(
-    "Feature dimension:",
-    d
-)
-
+print("Models:", models)
+print("K:", K)
+print("Feature dimension:", d)
 
 
 features = {}
-
 reward_table = {}
-
 cost_table = {}
 
 
-
-for i, row in tqdm(
-    df.iterrows(),
-    total=len(df),
-    desc="Loading dataset"
-):
-
-    key = (
-        int(row.query_id),
-        row.model
-    )
-
-
+for i, row in tqdm(df.iterrows(), total=len(df), desc="Loading dataset"):
+    key = (int(row.query_id), row.model)
     features[key] = feature_matrix[i]
+    reward_table[key] = float(row.reward)
+    cost_table[key] = float(row.cost)
 
-
-    reward_table[key] = float(
-        row.reward
-    )
-
-
-    cost_table[key] = float(
-        row.cost
-    )
-
-
-
-query_ids = sorted(
-    df.query_id.unique()
-)
-
+query_ids = sorted(df.query_id.unique())
 
 
 class LLMRoutingEnvironment:
-
-
-    def __init__(
-        self,
-        query_order,
-        budget
-    ):
-
+    def __init__(self, query_order, budget):
         self.query_order = query_order
-
         self.budget = budget
-
         self.history = []
-
         self.expected_reward = 0.0
-
         self.violations = 0
-
         self.infeasible_steps = 0
 
-
-
-    def feasible_actions(
-        self,
-        t
-    ):
-
+    def feasible_actions(self, t):
         q = self.query_order[t]
-
-
-        recent = self.history[
-            -(W-1):
-        ]
-
-
-        used_cost = sum(
-            c
-            for _, c in recent
-        )
-
-
+        recent = self.history[-(W-1):]
+        used_cost = sum(c for _, c in recent)
         actions = []
 
-
         for a, model in enumerate(models):
-
-            cost = cost_table[
-                (
-                    q,
-                    model
-                )
-            ]
-
+            cost = cost_table[(q, model)]
 
             if used_cost + cost <= self.budget:
-
                 actions.append(a)
-
-
 
         return actions
 
 
 
-    def step(
-        self,
-        t,
-        action
-    ):
-
+    def step(self, t, action):
         q = self.query_order[t]
-
-
         model = models[action]
-
-
-        reward = reward_table[
-            (
-                q,
-                model
-            )
-        ]
-
-
-        cost = cost_table[
-            (
-                q,
-                model
-            )
-        ]
-
-
-        self.history.append(
-            (
-                action,
-                cost
-            )
-        )
-
-
+        reward = reward_table[(q, model)]
+        cost = cost_table[(q, model)]
+        self.history.append((action, cost))
         self.expected_reward += reward
 
-
         if len(self.history) >= W:
-
-            window_cost = sum(
-                c
-                for _, c in self.history[-W:]
-            )
-
+            window_cost = sum(c for _, c in self.history[-W:])
 
             if window_cost > self.budget:
-
                 self.violations += 1
-
 
         return reward
 
 
 
 class OptimisticLinearBandit:
-
-
     def __init__(self):
 
         self.V = (
