@@ -7,8 +7,8 @@ from tqdm import tqdm
 from sentence_transformers import SentenceTransformer
 
 
-DATA_PATH = "/home/hadi/CRLT/dataset/LLMRouterBench/bench-release"
-OUTPUT_CSV = "/home/hadi/CRLT/llmrouting_processed/llmrouterbench_features.csv"
+DATA_PATH = "./dataset/LLMRouterBench/bench-release"
+OUTPUT_CSV = "./llmrouting_processed/llmrouterbench_features.csv"
 DATASETS = ["gpqa", "mmlupro", "livecodebench", "arenahard"]
 MODEL_NAMES = ["gpt-5", "claude-sonnet-4", "gemini-2.5-pro", "gemini-2.5-flash", "deepseek-v3-0324", "qwen3-235b-a22b-thinking-2507"]
 
@@ -113,8 +113,8 @@ print("Saved:", OUTPUT_CSV)
 # import numpy as np
 
 
-# CSV_FILE = "/home/hadi/CRLT/llmrouting_processed/llmrouterbench_features.csv"
-# FEATURE_FILE = "/home/hadi/CRLT/llmrouting_processed/features.npy"
+# CSV_FILE = "./llmrouting_processed/llmrouterbench_features.csv"
+# FEATURE_FILE = "./llmrouting_processed/features.npy"
 
 # df = pd.read_csv(CSV_FILE)
 # features = np.array([ast.literal_eval(x) for x in df["feature"]], dtype=np.float32)
@@ -133,9 +133,9 @@ print("Saved:", OUTPUT_CSV)
 # import numpy as np
 
 
-# INPUT_CSV = "/home/hadi/CRLT/llmrouting_processed/llmrouterbench_features.csv"
-# OUTPUT_CSV = "/home/hadi/CRLT/llmrouting_processed/llmrouterbench_final.csv"
-# FEATURE_FILE = "/home/hadi/CRLT/llmrouting_processed/features.npy"
+# INPUT_CSV = "./llmrouting_processed/llmrouterbench_features.csv"
+# OUTPUT_CSV = "./llmrouting_processed/llmrouterbench_final.csv"
+# FEATURE_FILE = "./llmrouting_processed/features.npy"
 
 # df = pd.read_csv(INPUT_CSV)
 # K = 6

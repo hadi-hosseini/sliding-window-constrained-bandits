@@ -3,12 +3,10 @@ import numpy as np
 import pandas as pd
 from tqdm import tqdm
 
-
-CSV_FILE = Path("/home/hadi/CRLT/llmrouting_processed/llmrouterbench_final.csv")
-FEATURE_FILE = Path("/home/hadi/CRLT/llmrouting_processed/features.npy")
+CSV_FILE = Path("./llmrouting_processed/llmrouterbench_final.csv")
+FEATURE_FILE = Path("./llmrouting_processed/features.npy")
 OUTPUT_DIR = Path("./llmrouter_results")
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-
 W = 5
 BUDGET_VALUES = [0.15, 0.10, 0.08, 0.06, 0.04]
 T_VALUES = [50, 100, 250, 500, 750, 1000]
@@ -27,14 +25,10 @@ K = len(models)
 d = feature_matrix.shape[1]
 
 print("Models:", models)
-print("K:", K)
-print("Feature dimension:", d)
-
 
 features = {}
 reward_table = {}
 cost_table = {}
-
 
 for i, row in tqdm(df.iterrows(), total=len(df), desc="Loading dataset"):
     key = (int(row.query_id), row.model)
@@ -86,643 +80,180 @@ class LLMRoutingEnvironment:
 
         return reward
 
-
-
 class OptimisticLinearBandit:
     def __init__(self):
-
-        self.V = (
-            LAMBDA_REG
-            *
-            np.eye(d)
-        )
-
-
+        self.V = (LAMBDA_REG * np.eye(d))
         self.b = np.zeros(d)
 
-
-
     def theta_hat(self):
-
-        return np.linalg.solve(
-            self.V,
-            self.b
-        )
-
-
+        return np.linalg.solve(self.V, self.b)
 
     def beta(self):
+        return (NOISE_R * np.sqrt(d * np.log(1 / DELTA)))
 
-        return (
-            NOISE_R
-            *
-            np.sqrt(
-                d
-                *
-                np.log(
-                    1 / DELTA
-                )
-            )
-        )
-
-
-
-    def score(
-        self,
-        x
-    ):
-
+    def score(self, x):
         theta = self.theta_hat()
-
-
-        uncertainty = np.sqrt(
-            x
-            @
-            np.linalg.solve(
-                self.V,
-                x
-            )
-        )
-
-
-        return (
-            theta @ x
-            +
-            self.beta()
-            *
-            uncertainty
-        )
-
-
+        uncertainty = np.sqrt(x @ np.linalg.solve(self.V, x))
+        return (theta @ x + self.beta() * uncertainty)
 
     def logdet(self):
+        return np.linalg.slogdet(self.V)[1]
 
-        return np.linalg.slogdet(
-            self.V
-        )[1]
-
-
-
-    def update(
-        self,
-        x,
-        y
-    ):
-
-        self.V += np.outer(
-            x,
-            x
-        )
-
-
+    def update(self, x, y):
+        self.V += np.outer(x, x)
         self.b += y*x
 
 class MyopicFeasibleOFUL:
-
-
     def __init__(self):
-
         self.model = OptimisticLinearBandit()
-
         self.n_updates = 0
 
-
-
-    def choose(
-        self,
-        actions,
-        q
-    ):
-
+    def choose(self, actions, q):
         scores = []
-
-
         for a in actions:
-
-            x = features[
-                (
-                    q,
-                    models[a]
-                )
-            ]
-
-
-            scores.append(
-                self.model.score(x)
-            )
-
+            x = features[(q, models[a])]
+            scores.append(self.model.score(x))
 
         self.n_updates += 1
 
+        return actions[np.argmax(scores)]
 
-        return actions[
-            np.argmax(scores)
-        ]
+    def update(self, x, y):
+        self.model.update(x, y)
 
-
-
-    def update(
-        self,
-        x,
-        y
-    ):
-
-        self.model.update(
-            x,
-            y
-        )
-
-
-
-class UnconstrainedOFUL(
-    MyopicFeasibleOFUL
-):
-
+class UnconstrainedOFUL(MyopicFeasibleOFUL):
     pass
 
-
-
 class RareUpdateOptimisticPlanning:
-
-
     def __init__(self):
-
         self.model = OptimisticLinearBandit()
-
         self.frozen_scores = {}
-
         self.last_logdet = None
-
         self.n_updates = 0
 
-
-
-    def choose(
-        self,
-        actions,
-        q
-    ):
-
+    def choose(self, actions, q):
         current_logdet = self.model.logdet()
-
-
-        need_update = (
-
-            self.last_logdet is None
-
-            or
-
-            current_logdet
-            >
-            self.last_logdet
-            +
-            np.log(DET_FACTOR)
-
-        )
-
-
+        need_update = (self.last_logdet is None or current_logdet > self.last_logdet + np.log(DET_FACTOR))
         if need_update:
-
-
             self.frozen_scores = {}
 
-
             for a in actions:
-
-                x = features[
-                    (
-                        q,
-                        models[a]
-                    )
-                ]
-
-
-                self.frozen_scores[a] = (
-                    self.model.score(x)
-                )
-
+                x = features[(q, models[a])]
+                self.frozen_scores[a] = (self.model.score(x))
 
             self.last_logdet = current_logdet
-
             self.n_updates += 1
 
-
-
         else:
-
-
             for a in actions:
-
                 if a not in self.frozen_scores:
+                    x = features[(q, models[a])]
+                    self.frozen_scores[a] = (self.model.score(x))
 
-                    x = features[
-                        (
-                            q,
-                            models[a]
-                        )
-                    ]
+        return max(actions, key=lambda a: self.frozen_scores[a])
 
+    def update(self, x, y):
+        self.model.update(x, y)
 
-                    self.frozen_scores[a] = (
-                        self.model.score(x)
-                    )
-
-
-
-        return max(
-            actions,
-            key=lambda a:
-            self.frozen_scores[a]
-        )
-
-
-
-    def update(
-        self,
-        x,
-        y
-    ):
-
-        self.model.update(
-            x,
-            y
-        )
-
-
-
-def compute_offline_optimal_reward(
-    query_order,
-    T,
-    budget
-):
-    """
-    Offline optimal reward with full knowledge of
-    future queries under sliding-window cost constraints.
-
-    State:
-        last W-1 selected model costs
-
-    """
-
-    dp = {
-        tuple(): 0.0
-    }
-
+def compute_offline_optimal_reward(query_order, T, budget):
+    dp = {tuple(): 0.0}
 
     for t in range(T):
-
         q = query_order[t]
-
         new_dp = {}
 
-
         for history, total_reward in dp.items():
-
-
             for model in models:
+                cost = cost_table[(q, model)]
+                reward = reward_table[(q, model)]
+                new_history = (history + (cost,))
 
-
-                cost = cost_table[
-                    (
-                        q,
-                        model
-                    )
-                ]
-
-
-                reward = reward_table[
-                    (
-                        q,
-                        model
-                    )
-                ]
-
-
-                new_history = (
-                    history
-                    +
-                    (cost,)
-                )
-
-
-                # check sliding-window constraint
                 if len(new_history) >= W:
-
-                    window_cost = sum(
-                        new_history[-W:]
-                    )
-
-
+                    window_cost = sum(new_history[-W:])
                     if window_cost > budget:
                         continue
 
 
+                new_history = new_history[-(W-1):]
+                new_reward = (total_reward + reward)
 
-                # keep only last W-1 costs
-                new_history = new_history[
-                    -(W-1):
-                ]
-
-
-                new_reward = (
-                    total_reward
-                    +
-                    reward
-                )
-
-
-                if (
-                    new_history not in new_dp
-                    or
-                    new_reward > new_dp[new_history]
-                ):
-
+                if (new_history not in new_dp or new_reward > new_dp[new_history]):
                     new_dp[new_history] = new_reward
-
-
-
         dp = new_dp
 
+    return max(dp.values())
 
 
-    return max(
-        dp.values()
-    )
-
-
-def run_policy(
-    policy_name,
-    T,
-    seed,
-    budget
-):
-
-    rng = np.random.default_rng(
-        seed
-    )
-
-
-    query_order = rng.choice(
-        query_ids,
-        size=T,
-        replace=False
-    )
-
-
-    env = LLMRoutingEnvironment(
-        query_order,
-        budget
-    )
-
-    offline_optimal = compute_offline_optimal_reward(
-    query_order,
-    T,
-    budget
-    )
-
-
+def run_policy(policy_name, T, seed, budget):
+    rng = np.random.default_rng(seed)
+    query_order = rng.choice(query_ids, size=T, replace=False)
+    env = LLMRoutingEnvironment(query_order, budget)
+    offline_optimal = compute_offline_optimal_reward(query_order, T, budget)
 
     if policy_name == "Rare-Update Optimistic Planning":
-
         agent = RareUpdateOptimisticPlanning()
 
-
     elif policy_name == "Myopic Feasible OFUL":
-
         agent = MyopicFeasibleOFUL()
 
-
     else:
-
         agent = UnconstrainedOFUL()
 
-
-
     for t in range(T):
-
         q = query_order[t]
 
-
         if policy_name == "Unconstrained OFUL":
-
-            actions = list(
-                range(K)
-            )
-
+            actions = list(range(K))
 
         else:
+            actions = env.feasible_actions(t)
 
-            actions = env.feasible_actions(
-                t
-            )
-
-
-
-        # no feasible model
         if len(actions) == 0:
-
             env.infeasible_steps += 1
-
             continue
 
-
-
-        action = agent.choose(
-            actions,
-            q
-        )
-
-
-        reward = env.step(
-            t,
-            action
-        )
-
-
-        x = features[
-            (
-                q,
-                models[action]
-            )
-        ]
-
-
-        agent.update(
-            x,
-            reward
-        )
-
-
+        action = agent.choose(actions, q)
+        reward = env.step(t, action)
+        x = features[(q, models[action])]
+        agent.update(x, reward)
 
     return {
-
-        "expected_reward":
-        env.expected_reward,
-
-
-        "average_reward":
-        env.expected_reward / T,
-
-
-        "offline_optimal":
-        offline_optimal,
-
-
-        "regret":
-        offline_optimal - env.expected_reward,
-
-
-        "normalized_regret":
-        (
-            offline_optimal
-            -
-            env.expected_reward
-        ) / T,
-
-
-        "violations":
-        env.violations,
-
-
-        "infeasible_steps":
-        env.infeasible_steps,
-
-
-        "updates":
-        agent.n_updates
-
+        "expected_reward": env.expected_reward,
+        "average_reward": env.expected_reward / T,
+        "offline_optimal": offline_optimal,
+        "regret": offline_optimal - env.expected_reward,
+        "normalized_regret": (offline_optimal - env.expected_reward) / T,
+        "violations": env.violations,
+        "infeasible_steps": env.infeasible_steps,
+        "updates": agent.n_updates
     }
 
 
-
 def run():
-
     results = []
-
-
-    partial_file = (
-        OUTPUT_DIR /
-        "experiment_results_budget_partial.csv"
-    )
-
-
-    final_file = (
-        OUTPUT_DIR /
-        "experiment_results_budget.csv"
-    )
-
+    final_file = (OUTPUT_DIR / "experiment_results_budget.csv")
 
     for budget in BUDGET_VALUES:
+        print("\n==============================")
+        print("Running budget:", budget)
+        print("==============================")
 
-
-        print(
-            "\n=============================="
-        )
-
-        print(
-            "Running budget:",
-            budget
-        )
-
-        print(
-            "=============================="
-        )
-
-
-        for T in tqdm(
-            T_VALUES,
-            desc=f"Budget {budget}"
-        ):
-
-
-            for run_id in range(
-                N_RUNS
-            ):
-
-
+        for T in tqdm(T_VALUES, desc=f"Budget {budget}"):
+            for run_id in range(N_RUNS):
                 for policy in POLICIES:
-
-
-                    result = run_policy(
-                        policy,
-                        T,
-                        SEED + run_id,
-                        budget
-                    )
-
-
-                    results.append(
-                        {
+                    result = run_policy(policy, T, SEED + run_id, budget)
+                    results.append({
                             "budget": budget,
                             "T": T,
                             "run": run_id,
                             "policy": policy,
                             **result
-                        }
-                    )
+                            })
 
-
-
-        checkpoint = pd.DataFrame(
-            results
-        )
-
-
-        checkpoint.to_csv(
-            partial_file,
-            index=False
-        )
-
-
-        print(
-            "Checkpoint saved:",
-            partial_file
-        )
-
-
-        print(
-            checkpoint
-            .groupby(
-                [
-                    "budget",
-                    "T",
-                    "policy"
-                ]
-            )
-            .mean()
-        )
-
-
-
-    results = pd.DataFrame(
-        results
-    )
-
-
-    results.to_csv(
-        final_file,
-        index=False
-    )
-
-
-    print(
-        "\nFinal saved:",
-        final_file
-    )
-
-
-    print(
-        results
-        .groupby(
-            [
-                "budget",
-                "T",
-                "policy"
-            ]
-        )
-        .mean()
-    )
-
+    results = pd.DataFrame(results)
+    results.to_csv(final_file, index=False)
+    print("\nFinal saved:", final_file)
+    print(results.groupby(["budget", "T", "policy"]).mean())
 
 if __name__ == "__main__":
     run()
