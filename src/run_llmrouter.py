@@ -350,6 +350,106 @@ class RareUpdateOptimisticPlanning:
 
 
 
+def compute_offline_optimal_reward(
+    query_order,
+    T,
+    budget
+):
+    """
+    Offline optimal reward with full knowledge of
+    future queries under sliding-window cost constraints.
+
+    State:
+        last W-1 selected model costs
+
+    """
+
+    dp = {
+        tuple(): 0.0
+    }
+
+
+    for t in range(T):
+
+        q = query_order[t]
+
+        new_dp = {}
+
+
+        for history, total_reward in dp.items():
+
+
+            for model in models:
+
+
+                cost = cost_table[
+                    (
+                        q,
+                        model
+                    )
+                ]
+
+
+                reward = reward_table[
+                    (
+                        q,
+                        model
+                    )
+                ]
+
+
+                new_history = (
+                    history
+                    +
+                    (cost,)
+                )
+
+
+                # check sliding-window constraint
+                if len(new_history) >= W:
+
+                    window_cost = sum(
+                        new_history[-W:]
+                    )
+
+
+                    if window_cost > budget:
+                        continue
+
+
+
+                # keep only last W-1 costs
+                new_history = new_history[
+                    -(W-1):
+                ]
+
+
+                new_reward = (
+                    total_reward
+                    +
+                    reward
+                )
+
+
+                if (
+                    new_history not in new_dp
+                    or
+                    new_reward > new_dp[new_history]
+                ):
+
+                    new_dp[new_history] = new_reward
+
+
+
+        dp = new_dp
+
+
+
+    return max(
+        dp.values()
+    )
+
+
 def run_policy(
     policy_name,
     T,
@@ -372,6 +472,12 @@ def run_policy(
     env = LLMRoutingEnvironment(
         query_order,
         budget
+    )
+
+    offline_optimal = compute_offline_optimal_reward(
+    query_order,
+    T,
+    budget
     )
 
 
@@ -456,6 +562,22 @@ def run_policy(
 
         "average_reward":
         env.expected_reward / T,
+
+
+        "offline_optimal":
+        offline_optimal,
+
+
+        "regret":
+        offline_optimal - env.expected_reward,
+
+
+        "normalized_regret":
+        (
+            offline_optimal
+            -
+            env.expected_reward
+        ) / T,
 
 
         "violations":
