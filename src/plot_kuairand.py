@@ -28,6 +28,7 @@ COLORS = {
 POLICY_COLORS = {
     "Rare-Update Optimistic Planning": COLORS["blue"],
     "Myopic Feasible OFUL": COLORS["orange"],
+    "Primal-Dual OFUL": COLORS["purple"],
     "Unconstrained OFUL": COLORS["red"],
 }
 
@@ -35,12 +36,17 @@ POLICY_COLORS = {
 POLICY_LINESTYLES = {
     "Rare-Update Optimistic Planning": "-",
     "Myopic Feasible OFUL": "--",
+    "Primal-Dual OFUL": ":",
     "Unconstrained OFUL": "-.",
 }
 
 
-POLICY_ORDER = ["Rare-Update Optimistic Planning", "Myopic Feasible OFUL", "Unconstrained OFUL"]
-
+POLICY_ORDER = [
+    "Rare-Update Optimistic Planning",
+    "Myopic Feasible OFUL",
+    "Primal-Dual OFUL",
+    "Unconstrained OFUL"
+]
 
 POLICY_LABELS = {
     "Rare-Update Optimistic Planning":
@@ -48,6 +54,9 @@ POLICY_LABELS = {
 
     "Myopic Feasible OFUL":
         "Myopic Feasible OFUL",
+
+    "Primal-Dual OFUL":
+        "Primal-Dual OFUL",
 
     "Unconstrained OFUL":
         "Unconstrained OFUL",

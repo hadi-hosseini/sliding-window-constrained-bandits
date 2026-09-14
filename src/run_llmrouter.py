@@ -16,7 +16,12 @@ DELTA = 0.05
 NOISE_R = 0.5
 DET_FACTOR = 2.0
 SEED = 42
-POLICIES = ["Rare-Update Optimistic Planning", "Myopic Feasible OFUL", "Unconstrained OFUL"]
+POLICIES = [
+    "Rare-Update Optimistic Planning",
+    "Myopic Feasible OFUL",
+    "Primal-Dual OFUL",
+    "Unconstrained OFUL"
+]
 
 df = pd.read_csv(CSV_FILE)
 feature_matrix = np.load(FEATURE_FILE)
@@ -155,6 +160,39 @@ class RareUpdateOptimisticPlanning:
     def update(self, x, y):
         self.model.update(x, y)
 
+
+class PrimalDualOFUL:
+    def __init__(self, budget, eta=0.1):
+        self.model = OptimisticLinearBandit()
+        self.budget = budget
+        self.eta = eta
+        self.lambda_dual = 0.0
+        self.history = []
+        self.n_updates = 0
+
+    def choose(self, actions, q):
+        scores = []
+        recent_costs = [c for _, c in self.history[-(W-1):]]
+
+        for a in actions:
+            cost = cost_table[(q, models[a])]
+            predicted_window_cost = (sum(recent_costs) + cost)
+            violation = max(0, predicted_window_cost - self.budget)
+            x = features[(q, models[a])]
+            optimistic_reward = (self.model.score(x))
+            lagrangian_score = (optimistic_reward - self.lambda_dual * violation)
+            scores.append(lagrangian_score)
+
+        self.n_updates += 1
+        return actions[np.argmax(scores)]
+
+    def update(self, x, y, action, cost):
+        self.model.update(x, y)
+        self.history.append((action, cost))
+        window_cost = sum(c for _, c in self.history[-W:])
+        violation = max(0,window_cost - self.budget)
+        self.lambda_dual = max(0, self.lambda_dual + self.eta * violation)
+
 def compute_offline_optimal_reward(query_order, T, budget):
     dp = {tuple(): 0.0}
 
@@ -183,7 +221,6 @@ def compute_offline_optimal_reward(query_order, T, budget):
 
     return max(dp.values())
 
-
 def run_policy(policy_name, T, seed, budget):
     rng = np.random.default_rng(seed)
     query_order = rng.choice(query_ids, size=T, replace=False)
@@ -196,13 +233,16 @@ def run_policy(policy_name, T, seed, budget):
     elif policy_name == "Myopic Feasible OFUL":
         agent = MyopicFeasibleOFUL()
 
+    elif policy_name == "Primal-Dual OFUL":
+        agent = PrimalDualOFUL(budget=budget, eta=0.1)
+
     else:
         agent = UnconstrainedOFUL()
 
     for t in range(T):
         q = query_order[t]
 
-        if policy_name == "Unconstrained OFUL":
+        if policy_name in ["Unconstrained OFUL", "Primal-Dual OFUL"]:
             actions = list(range(K))
 
         else:
@@ -215,7 +255,13 @@ def run_policy(policy_name, T, seed, budget):
         action = agent.choose(actions, q)
         reward = env.step(t, action)
         x = features[(q, models[action])]
-        agent.update(x, reward)
+        
+        if policy_name == "Primal-Dual OFUL":
+            cost = cost_table[(q, models[action])]
+            agent.update(x, reward, action, cost)
+
+        else:
+            agent.update(x, reward)
 
     return {
         "expected_reward": env.expected_reward,
