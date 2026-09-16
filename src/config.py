@@ -77,4 +77,4 @@ class LLMRouterConfig:
     planning_horizon: int = 3
 
     # Primal-dual baseline
-    dual_eta: float = 1
+    dual_eta: float = 5
