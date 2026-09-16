@@ -1,36 +1,21 @@
-from pathlib import Path
+from functools import lru_cache
+
 import numpy as np
 import pandas as pd
 from tqdm import tqdm
 
-CSV_FILE = Path("./llmrouting_processed/llmrouterbench_final.csv")
-FEATURE_FILE = Path("./llmrouting_processed/features.npy")
-OUTPUT_DIR = Path("./llmrouter_results")
-OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-W = 5
-BUDGET_VALUES = [0.15, 0.10, 0.08, 0.06, 0.04]
-T_VALUES = [50, 100, 250, 500, 750, 1000]
-N_RUNS = 10
-LAMBDA_REG = 1.0
-DELTA = 0.05
-NOISE_R = 0.5
-DET_FACTOR = 2.0
-SEED = 42
-POLICIES = [
-    "Rare-Update Optimistic Planning",
-    "Myopic Feasible OFUL",
-    "Primal-Dual OFUL",
-    "Unconstrained OFUL"
-]
+from config import LLMRouterConfig
+
+config = LLMRouterConfig()
+CSV_FILE = config.data_dir / config.csv_file
+FEATURE_FILE = config.data_dir / config.feature_file
 
 df = pd.read_csv(CSV_FILE)
 feature_matrix = np.load(FEATURE_FILE)
 models = sorted(df.model.unique())
+
 K = len(models)
 d = feature_matrix.shape[1]
-
-print("Models:", models)
-
 features = {}
 reward_table = {}
 cost_table = {}
@@ -44,156 +29,8 @@ for i, row in tqdm(df.iterrows(), total=len(df), desc="Loading dataset"):
 query_ids = sorted(df.query_id.unique())
 
 
-class LLMRoutingEnvironment:
-    def __init__(self, query_order, budget):
-        self.query_order = query_order
-        self.budget = budget
-        self.history = []
-        self.expected_reward = 0.0
-        self.violations = 0
-        self.infeasible_steps = 0
-
-    def feasible_actions(self, t):
-        q = self.query_order[t]
-        recent = self.history[-(W-1):]
-        used_cost = sum(c for _, c in recent)
-        actions = []
-
-        for a, model in enumerate(models):
-            cost = cost_table[(q, model)]
-
-            if used_cost + cost <= self.budget:
-                actions.append(a)
-
-        return actions
-
-
-
-    def step(self, t, action):
-        q = self.query_order[t]
-        model = models[action]
-        reward = reward_table[(q, model)]
-        cost = cost_table[(q, model)]
-        self.history.append((action, cost))
-        self.expected_reward += reward
-
-        if len(self.history) >= W:
-            window_cost = sum(c for _, c in self.history[-W:])
-
-            if window_cost > self.budget:
-                self.violations += 1
-
-        return reward
-
-class OptimisticLinearBandit:
-    def __init__(self):
-        self.V = (LAMBDA_REG * np.eye(d))
-        self.b = np.zeros(d)
-
-    def theta_hat(self):
-        return np.linalg.solve(self.V, self.b)
-
-    def beta(self):
-        return (NOISE_R * np.sqrt(d * np.log(1 / DELTA)))
-
-    def score(self, x):
-        theta = self.theta_hat()
-        uncertainty = np.sqrt(x @ np.linalg.solve(self.V, x))
-        return (theta @ x + self.beta() * uncertainty)
-
-    def logdet(self):
-        return np.linalg.slogdet(self.V)[1]
-
-    def update(self, x, y):
-        self.V += np.outer(x, x)
-        self.b += y*x
-
-class MyopicFeasibleOFUL:
-    def __init__(self):
-        self.model = OptimisticLinearBandit()
-        self.n_updates = 0
-
-    def choose(self, actions, q):
-        scores = []
-        for a in actions:
-            x = features[(q, models[a])]
-            scores.append(self.model.score(x))
-
-        self.n_updates += 1
-
-        return actions[np.argmax(scores)]
-
-    def update(self, x, y):
-        self.model.update(x, y)
-
-class UnconstrainedOFUL(MyopicFeasibleOFUL):
-    pass
-
-class RareUpdateOptimisticPlanning:
-    def __init__(self):
-        self.model = OptimisticLinearBandit()
-        self.frozen_scores = {}
-        self.last_logdet = None
-        self.n_updates = 0
-
-    def choose(self, actions, q):
-        current_logdet = self.model.logdet()
-        need_update = (self.last_logdet is None or current_logdet > self.last_logdet + np.log(DET_FACTOR))
-        if need_update:
-            self.frozen_scores = {}
-
-            for a in actions:
-                x = features[(q, models[a])]
-                self.frozen_scores[a] = (self.model.score(x))
-
-            self.last_logdet = current_logdet
-            self.n_updates += 1
-
-        else:
-            for a in actions:
-                if a not in self.frozen_scores:
-                    x = features[(q, models[a])]
-                    self.frozen_scores[a] = (self.model.score(x))
-
-        return max(actions, key=lambda a: self.frozen_scores[a])
-
-    def update(self, x, y):
-        self.model.update(x, y)
-
-
-class PrimalDualOFUL:
-    def __init__(self, budget, eta=0.1):
-        self.model = OptimisticLinearBandit()
-        self.budget = budget
-        self.eta = eta
-        self.lambda_dual = 0.0
-        self.history = []
-        self.n_updates = 0
-
-    def choose(self, actions, q):
-        scores = []
-        recent_costs = [c for _, c in self.history[-(W-1):]]
-
-        for a in actions:
-            cost = cost_table[(q, models[a])]
-            predicted_window_cost = (sum(recent_costs) + cost)
-            violation = max(0, predicted_window_cost - self.budget)
-            x = features[(q, models[a])]
-            optimistic_reward = (self.model.score(x))
-            lagrangian_score = (optimistic_reward - self.lambda_dual * violation)
-            scores.append(lagrangian_score)
-
-        self.n_updates += 1
-        return actions[np.argmax(scores)]
-
-    def update(self, x, y, action, cost):
-        self.model.update(x, y)
-        self.history.append((action, cost))
-        window_cost = sum(c for _, c in self.history[-W:])
-        violation = max(0,window_cost - self.budget)
-        self.lambda_dual = max(0, self.lambda_dual + self.eta * violation)
-
-def compute_offline_optimal_reward(query_order, T, budget):
+def compute_offline_optimal_reward(query_order, T, budget, config):
+    window_size = config.window_size
     dp = {tuple(): 0.0}
 
     for t in range(T):
@@ -204,64 +41,353 @@ def compute_offline_optimal_reward(query_order, T, budget):
             for model in models:
                 cost = cost_table[(q, model)]
                 reward = reward_table[(q, model)]
-                new_history = (history + (cost,))
+                new_history = history + (cost,)
 
-                if len(new_history) >= W:
-                    window_cost = sum(new_history[-W:])
+                if len(new_history) >= window_size:
+                    window_cost = sum(new_history[-window_size:])
+
                     if window_cost > budget:
                         continue
 
-
-                new_history = new_history[-(W-1):]
-                new_reward = (total_reward + reward)
+                new_history = new_history[-(window_size - 1):]
+                new_reward = total_reward + reward
 
                 if (new_history not in new_dp or new_reward > new_dp[new_history]):
                     new_dp[new_history] = new_reward
-        dp = new_dp
 
+        dp = new_dp
     return max(dp.values())
+
+
+class LLMRoutingEnvironment:
+    def __init__(self, query_order, budget, config):
+        self.query_order = query_order
+        self.budget = budget
+        self.window_size = config.window_size
+        self.history = []
+        self.expected_reward = 0.0
+        self.violations = 0
+
+    def feasible_actions(self, t):
+        q = self.query_order[t]
+        recent = self.history[-(self.window_size - 1):]
+        used_cost = sum(cost for _, cost in recent)
+        actions = []
+
+        for action, model in enumerate(models):
+            cost = cost_table[(q, model)]
+            if used_cost + cost <= self.budget:
+                actions.append(action)
+
+        return actions
+
+    def step(self, t, action):
+        q = self.query_order[t]
+
+        if action is None:
+            reward = 0.0
+            cost = 0.0
+            self.history.append((None, cost))
+            return reward
+
+        model = models[action]
+        reward = reward_table[(q, model)]
+        cost = cost_table[(q, model)]
+        self.history.append((action, cost))
+        self.expected_reward += reward
+
+        if len(self.history) >= self.window_size:
+            window_cost = sum(cost for _, cost in self.history[-self.window_size:])
+            if window_cost > self.budget:
+                self.violations += 1
+
+        return reward
+
+
+class OptimisticLinearBandit:
+    def __init__(self, config, d):
+        self.lambda_reg = config.lambda_reg
+        self.delta = config.delta
+        self.noise_r = config.noise_r
+        self.d = d
+        self.V = self.lambda_reg * np.eye(d)
+        self.b = np.zeros(d)
+
+    def theta_hat(self):
+        return np.linalg.solve(self.V, self.b)
+
+    def beta(self):
+        return self.noise_r * np.sqrt(self.d * np.log(1.0 / self.delta))
+
+    def score(self, x):
+        theta = self.theta_hat()
+        uncertainty = np.sqrt(x @ np.linalg.solve(self.V, x))
+        return theta @ x + self.beta() * uncertainty
+
+    def logdet(self):
+        return np.linalg.slogdet(self.V)[1]
+
+    def update(self, x, y):
+        self.V += np.outer(x, x)
+        self.b += y * x
+
+
+class OFULPolicy:
+    def __init__(self, config, d, seed=0):
+        self.rng = np.random.default_rng(seed)
+        self.model = OptimisticLinearBandit(config=config, d=d)
+        self.n_updates = 0
+
+    def choose(self, actions, q):
+        actions = np.asarray(actions, dtype=int)
+
+        if actions.size == 0:
+            return None
+
+        scores = np.array([self.model.score(features[(q, models[action])]) for action in actions])
+        max_score = np.max(scores)
+        candidates = actions[np.isclose(scores, max_score)]
+        self.n_updates += 1
+        return int(self.rng.choice(candidates))
+
+    def update(self, x, reward):
+        self.model.update(x, reward)
+
+
+
+
+class RareUpdateOptimisticPlanning:
+    def __init__(self, config, d, budget, models, features, cost_table, seed=0):
+        self.model = OptimisticLinearBandit(config=config, d=d)
+        self.config = config
+        self.models = models
+        self.features = features
+        self.cost_table = cost_table
+        self.K = len(models)
+        self.window_size = config.window_size
+        self.det_factor = config.det_factor
+        self.planning_horizon = config.planning_horizon
+        self.budget = budget
+        self.rng = np.random.default_rng(seed)
+        self.episode_logdet = None
+        self.frozen_scores = {}
+        self.frozen_theta = None
+        self.frozen_V_inv = None
+        self.frozen_beta = None
+        self.n_updates = 0
+
+    def start_new_episode(self):
+        self.optimistic_value.cache_clear()
+        self.episode_logdet = self.model.logdet()
+        self.frozen_theta = self.model.theta_hat().copy()
+        self.frozen_V_inv = np.linalg.inv(self.model.V).copy()
+        self.frozen_beta = self.model.beta()
+        self.n_updates += 1
+
+
+    def frozen_score(self, q, action):
+        x = self.features[(q, self.models[action])]
+        uncertainty = np.sqrt(x @ self.frozen_V_inv @ x)
+        return self.frozen_theta @ x + self.frozen_beta * uncertainty
+
+    def determinant_doubled(self):
+        if self.episode_logdet is None:
+            return True
+
+        return (self.model.logdet() > self.episode_logdet + np.log(self.det_factor))
+
+    def transition(self, state, cost):
+        return tuple((list(state) + [cost])[-(self.window_size - 1):])
+
+    def feasible_actions_from_state(self, state, q):
+        used_cost = sum(state)
+        feasible = []
+
+        for action in range(self.K):
+            cost = self.cost_table[(q, self.models[action])]
+            if used_cost + cost <= self.budget:
+                feasible.append(action)
+
+        return feasible
+
+    @lru_cache(maxsize=None)
+    def optimistic_value(self, state, queries, horizon):
+        if horizon <= 0:
+            return 0.0
+
+        q = queries[0]
+        feasible_actions = self.feasible_actions_from_state(state, q)
+
+        if len(feasible_actions) == 0:
+            return 0.0
+
+        best_value = -np.inf
+        for action in feasible_actions:
+            cost = self.cost_table[(q, self.models[action])]
+            next_state = self.transition(state, cost)
+            value = (self.frozen_score(q, action) + self.optimistic_value(next_state, queries[1:], horizon - 1))
+            best_value = max(best_value, value)
+
+        return best_value
+
+    def planning_action(self, state, queries, horizon):
+        q = queries[0]
+        feasible_actions = self.feasible_actions_from_state(state, q)
+
+        if len(feasible_actions) == 0:
+            return None
+
+        best_value = -np.inf
+        candidates = []
+        for action in feasible_actions:
+            cost = self.cost_table[(q, self.models[action])]
+            next_state = self.transition(state, cost)
+            value = (self.frozen_score(q, action) + self.optimistic_value(next_state, queries[1:], horizon - 1))
+
+            if value > best_value:
+                best_value = value
+                candidates = [action]
+
+            elif np.isclose(value, best_value):
+                candidates.append(action)
+
+        return int(self.rng.choice(candidates))
+
+    def choose(self, state, queries, t, T):
+        queries = tuple(queries)
+
+        if len(queries) == 0:
+            return None
+
+        horizon = min(T - t, self.planning_horizon, len(queries))
+        planning_queries = queries[:horizon]
+        q = planning_queries[0]
+        feasible_actions = self.feasible_actions_from_state(state, q)
+
+        if len(feasible_actions) == 0:
+            return None
+
+        if self.determinant_doubled():
+            self.start_new_episode()
+
+        return self.planning_action(state=state, queries=planning_queries, horizon=horizon)
+
+    def update(self, x, y):
+        if x is not None:
+            self.model.update(x, y)
+
+
+
+class PrimalDualOFUL:
+
+    def __init__(self, budget, config, d, models, features, cost_table, seed=0):
+        self.model = OptimisticLinearBandit(config=config, d=d)
+        self.budget = budget
+        self.window_size = config.window_size
+        self.eta = config.dual_eta
+        self.models = models
+        self.features = features
+        self.cost_table = cost_table
+        self.K = len(models)
+        self.rng = np.random.default_rng(seed)
+        self.lambda_dual = 0.0
+        self.history = []
+        self.n_updates = 0
+        self.t = 0
+
+    def choose(self, actions, q):
+        actions = np.asarray(actions, dtype=int)
+
+        if actions.size == 0:
+            return None
+
+        scores = []
+        for action in actions:
+            model = self.models[action]
+            x = self.features[(q, model)]
+            cost = self.cost_table[(q, model)]
+            optimistic_reward = self.model.score(x)
+            lagrangian_score = optimistic_reward - self.lambda_dual * cost
+            scores.append(lagrangian_score)
+        scores = np.asarray(scores)
+
+        max_score = scores.max()
+        candidates = actions[np.isclose(scores, max_score)]
+        self.n_updates += 1
+
+        return int(self.rng.choice(candidates))
+
+    def update(self, x, y, action, cost):
+        if action is None:
+            cost = 0.0
+            self.history.append((None, cost))
+        else:
+            self.model.update(x, y)
+            self.history.append((action, cost))
+
+        recent = self.history[-self.window_size:]
+
+        window_cost = sum(cost for _, cost in recent)
+        constraint_residual = window_cost - self.budget
+        self.t += 1
+        eta_t = self.eta / np.sqrt(self.t)
+        self.lambda_dual = max(0.0, self.lambda_dual + eta_t * constraint_residual)
+
 
 def run_policy(policy_name, T, seed, budget):
     rng = np.random.default_rng(seed)
     query_order = rng.choice(query_ids, size=T, replace=False)
-    env = LLMRoutingEnvironment(query_order, budget)
-    offline_optimal = compute_offline_optimal_reward(query_order, T, budget)
+    env = LLMRoutingEnvironment(query_order=query_order, budget=budget, config=config)
+    offline_optimal = compute_offline_optimal_reward(query_order=query_order, T=T, budget=budget, config=config)
 
     if policy_name == "Rare-Update Optimistic Planning":
-        agent = RareUpdateOptimisticPlanning()
+        agent = RareUpdateOptimisticPlanning(config=config, d=d, budget=budget, models=models, features=features, cost_table=cost_table, seed=seed)
 
     elif policy_name == "Myopic Feasible OFUL":
-        agent = MyopicFeasibleOFUL()
+        agent = OFULPolicy(config=config, d=d, seed=seed)
 
     elif policy_name == "Primal-Dual OFUL":
-        agent = PrimalDualOFUL(budget=budget, eta=0.1)
+        agent = PrimalDualOFUL(budget=budget, config=config, d=d, models=models, features=features, cost_table=cost_table, seed=seed)
 
-    else:
-        agent = UnconstrainedOFUL()
+    elif policy_name == "Unconstrained OFUL":
+        agent = OFULPolicy(config=config, d=d, seed=seed)
+
+    state = tuple()
 
     for t in range(T):
         q = query_order[t]
 
-        if policy_name in ["Unconstrained OFUL", "Primal-Dual OFUL"]:
-            actions = list(range(K))
-
+        if policy_name == "Rare-Update Optimistic Planning":
+            queries = tuple(query_order[t:min(T, t + config.planning_horizon)])
+            action = agent.choose(state=state, queries=queries, t=t, T=T)
         else:
-            actions = env.feasible_actions(t)
+            if policy_name in ("Unconstrained OFUL", "Primal-Dual OFUL"):
+                actions = list(range(K))
+            else:
+                actions = env.feasible_actions(t)
 
-        if len(actions) == 0:
-            env.infeasible_steps += 1
-            continue
+            if len(actions) == 0:
+                continue
 
-        action = agent.choose(actions, q)
+            action = agent.choose(actions, q)
+
         reward = env.step(t, action)
-        x = features[(q, models[action])]
-        
-        if policy_name == "Primal-Dual OFUL":
-            cost = cost_table[(q, models[action])]
-            agent.update(x, reward, action, cost)
+        x = None
 
-        else:
-            agent.update(x, reward)
+        if action is not None:
+            x = features[(q, models[action])]
+            if policy_name == "Primal-Dual OFUL":
+                cost = cost_table[(q, models[action])]
+                agent.update(x, reward, action, cost)
+            else:
+                agent.update(x, reward)
+
+        if policy_name == "Rare-Update Optimistic Planning":
+            if action is None:
+                state = agent.transition(state, 0.0)
+            else:
+                cost = cost_table[(q, models[action])]
+                state = agent.transition(state, cost)
 
     return {
         "expected_reward": env.expected_reward,
@@ -270,36 +396,58 @@ def run_policy(policy_name, T, seed, budget):
         "regret": offline_optimal - env.expected_reward,
         "normalized_regret": (offline_optimal - env.expected_reward) / T,
         "violations": env.violations,
-        "infeasible_steps": env.infeasible_steps,
-        "updates": agent.n_updates
+        "updates": agent.n_updates,
     }
 
 
 def run():
     results = []
-    final_file = (OUTPUT_DIR / "experiment_results_budget.csv")
+    final_file = config.output_dir / "experiment_results_budget.csv"
 
-    for budget in BUDGET_VALUES:
+    for budget in config.budget_values:
         print("\n==============================")
         print("Running budget:", budget)
         print("==============================")
 
-        for T in tqdm(T_VALUES, desc=f"Budget {budget}"):
-            for run_id in range(N_RUNS):
-                for policy in POLICIES:
-                    result = run_policy(policy, T, SEED + run_id, budget)
-                    results.append({
-                            "budget": budget,
-                            "T": T,
-                            "run": run_id,
-                            "policy": policy,
-                            **result
-                            })
+        for T in tqdm(config.t_values, desc=f"Budget {budget}"):
+            for run_id in range(config.n_runs):
+                seed = config.random_seed + run_id
+
+                for policy in config.policies:
+                    result = run_policy(policy_name=policy, T=T, seed=seed, budget=budget)
+                    results.append({"budget": budget, "T": T, "run": run_id, "policy": policy, **result})
 
     results = pd.DataFrame(results)
     results.to_csv(final_file, index=False)
+
     print("\nFinal saved:", final_file)
-    print(results.groupby(["budget", "T", "policy"]).mean())
+
+    summary = (
+        results
+        .groupby(["budget", "T", "policy"], as_index=False)
+        .agg(
+            mean_expected_reward=("expected_reward", "mean"),
+            std_expected_reward=("expected_reward", "std"),
+            mean_average_reward=("average_reward", "mean"),
+            std_average_reward=("average_reward", "std"),
+            mean_offline_optimal=("offline_optimal", "mean"),
+            std_offline_optimal=("offline_optimal", "std"),
+            mean_regret=("regret", "mean"),
+            std_regret=("regret", "std"),
+            mean_normalized_regret=("normalized_regret", "mean"),
+            std_normalized_regret=("normalized_regret", "std"),
+            mean_violations=("violations", "mean"),
+            std_violations=("violations", "std"),
+            mean_updates=("updates", "mean"),
+            std_updates=("updates", "std"),
+        )
+    )
+
+    summary_file = config.output_dir / "experiment_summary_budget.csv"
+    summary.to_csv(summary_file, index=False)
+
+    print("\nSummary saved:", summary_file)
+    print(summary.to_string(index=False))
 
 if __name__ == "__main__":
     run()
