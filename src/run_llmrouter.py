@@ -414,6 +414,7 @@ def run():
                 seed = config.random_seed + run_id
 
                 for policy in config.policies:
+                    print(f"Budget={budget} | " f"T={T} | " f"Run={run_id} | " f"Policy={policy} | " f"Seed={seed}")
                     result = run_policy(policy_name=policy, T=T, seed=seed, budget=budget)
                     results.append({"budget": budget, "T": T, "run": run_id, "policy": policy, **result})
 
