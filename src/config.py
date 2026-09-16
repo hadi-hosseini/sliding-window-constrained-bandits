@@ -57,14 +57,14 @@ class LLMRouterConfig:
 
     # Sliding-window budget constraint
     window_size: int = 5
-    # budget_values: tuple[float, ...] = (0.15, 0.2, 0.25, 0.30, 0.35, 0.40,)
-    budget_values: tuple[float, ...] = (0.40,)
+    budget_values: tuple[float, ...] = (0.15, 0.2, 0.25, 0.30, 0.35, 0.40,)
+    # budget_values: tuple[float, ...] = (0.40,)
     
 
     # Experiment parameters
-    # t_values: tuple[int, ...] = (50, 100, 250, 500, 750, 1000,)
-    t_values: tuple[int, ...] = (500,)
-    n_runs: int = 2 # 10
+    t_values: tuple[int, ...] = (50, 100, 250, 500, 750, 1000, 2500, 5000)
+    # t_values: tuple[int, ...] = (5000,)
+    n_runs: int = 10 # 10
     random_seed: int = 42
 
     # Rare-update optimistic planning
@@ -77,4 +77,4 @@ class LLMRouterConfig:
     planning_horizon: int = 3
 
     # Primal-dual baseline
-    dual_eta: float = 0.01
+    dual_eta: float = 1

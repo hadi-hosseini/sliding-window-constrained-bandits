@@ -417,6 +417,7 @@ def run():
                     print(f"Budget={budget} | " f"T={T} | " f"Run={run_id} | " f"Policy={policy} | " f"Seed={seed}")
                     result = run_policy(policy_name=policy, T=T, seed=seed, budget=budget)
                     results.append({"budget": budget, "T": T, "run": run_id, "policy": policy, **result})
+                    pd.DataFrame(results).to_csv(final_file, index=False)
 
     results = pd.DataFrame(results)
     results.to_csv(final_file, index=False)
