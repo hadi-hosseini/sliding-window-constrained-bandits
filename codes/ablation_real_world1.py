@@ -15,19 +15,19 @@ kuairand_config = KuaiRandConfig()
 top_categories = pd.read_csv(kuairand_config.data_dir / "top_categories.csv")
 preferences = pd.read_csv(kuairand_config.data_dir / "user_category_preferences.csv")
 coverage = pd.read_csv(kuairand_config.data_dir / "user_coverage.csv")
-
 K = len(top_categories)
 theta_norm_bound = np.sqrt(K)
 
 PLANNING_HORIZONS = [1, 2, 5, 10, "full"]
-ABLATION_T = 40
+ABLATION_T = 200
 WINDOW_SIZE = 4
-ABLATION_N_USERS = 1
-ABLATION_N_RUNS = 1
+ABLATION_N_USERS = 100
+ABLATION_N_RUNS = 5
+MAX_EXPOSURE = 1
+
 
 ABLATION_OUTPUT_DIR = Path("./imgs")
 ABLATION_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-
 
 def select_eligible_users(coverage, K, config, n_users):
     eligible = coverage[(coverage["num_categories"] == K) & (coverage["min_category_interactions"] >= config.min_category_interactions)]
@@ -42,21 +42,20 @@ def get_theta(user_id, preferences, config):
     return theta_star
 
 
-def offline_value(theta_star, T, config):
-    w = config.window_size
-    c = config.max_exposure
-    number_of_categories = w // c
+def offline_value(theta_star, T):
+    c = MAX_EXPOSURE
+    number_of_categories = WINDOW_SIZE // c
     best_categories = np.sort(theta_star)[::-1][:number_of_categories]
     value_per_window = c * best_categories.sum()
-    return (T // w) * value_per_window
+    return (T // WINDOW_SIZE) * value_per_window
 
 
 class RollingExposureEnvironment:
-    def __init__(self, theta_star, config, seed=0):
+    def __init__(self, theta_star, seed=0):
         self.theta = np.asarray(theta_star, dtype=float)
         self.K = len(self.theta)
         self.w = WINDOW_SIZE
-        self.c = config.max_exposure
+        self.c = MAX_EXPOSURE
         self.rng = np.random.default_rng(seed)
         self.history = []
         self.realized_reward = 0
@@ -86,7 +85,6 @@ class RollingExposureEnvironment:
         self.realized_reward += reward
         self.expected_reward += expected_reward
         return reward, expected_reward, violation
-
 
 
 class OptimisticLinearBandit:
@@ -130,8 +128,8 @@ class RareUpdateOptimisticPlanning:
 
     def __init__(self, K, config, theta_norm_bound, planning_horizon, seed=0):
         self.K = K
-        self.w = config.window_size
-        self.c = config.max_exposure
+        self.w = WINDOW_SIZE
+        self.c = MAX_EXPOSURE
         self.det_factor = config.det_factor
         self.rng = np.random.default_rng(seed)
         self.model = OptimisticLinearBandit(K=K, config=config, theta_norm_bound=theta_norm_bound)
@@ -249,16 +247,16 @@ class RareUpdateOptimisticPlanning:
 
 
 def run_planning_horizon_policy(theta_star, planning_horizon, T, seed, config):
-    env = RollingExposureEnvironment(theta_star=theta_star, config=config, seed=seed)
+    env = RollingExposureEnvironment(theta_star=theta_star, seed=seed)
     agent = RareUpdateOptimisticPlanning(K=len(theta_star), config=config, theta_norm_bound=theta_norm_bound, planning_horizon=planning_horizon, seed=seed + 1000)
 
     for t in range(1, T + 1):
-        state = tuple(env.history[-(config.window_size - 1):])
+        state = tuple(env.history[-(WINDOW_SIZE - 1):])
         action = agent.choose(state=state, t=t, T=T)
         reward, _, _ = env.step(action)
         agent.update(action, reward)
 
-    V_off = offline_value(theta_star=theta_star, T=T, config=config)
+    V_off = offline_value(theta_star=theta_star, T=T)
     pseudo_regret = V_off - env.expected_reward
 
     return {
@@ -306,28 +304,17 @@ def run_ablation():
 
     results_df = pd.DataFrame(rows)
 
-    results_file = (ABLATION_OUTPUT_DIR/ "planning_horizon_ablation_results.csv")
-    results_df.to_csv(results_file, index=False)
+    # results_file = (ABLATION_OUTPUT_DIR/ "planning_horizon_ablation_results.csv")
+    # results_df.to_csv(results_file, index=False)
 
     user_results = (
         results_df
-        .groupby(
-            ["user_id", "T", "planning_horizon"],
-            as_index=False,
-        )
-        .agg(
-            average_expected_reward=(
-                "average_expected_reward",
-                "mean",
-            ),
-            normalized_pseudo_regret=(
-                "normalized_pseudo_regret",
-                "mean",
-            ),
+        .groupby(["user_id", "T", "planning_horizon"], as_index=False)
+        .agg(average_expected_reward=("average_expected_reward", "mean"),
+             normalized_pseudo_regret=("normalized_pseudo_regret", "mean"),
             violations=("violations", "mean"),
             updates=("updates", "mean"),
-        )
-    )
+        ))
 
     summary = (
         user_results
@@ -372,118 +359,48 @@ def run_ablation():
         )
     )
 
-    # 95% confidence intervals across users.
-    summary["reward_ci95"] = (
-        1.96
-        * summary["std_reward"]
-        / np.sqrt(summary["n_users"])
-    )
-    summary["regret_ci95"] = (
-        1.96
-        * summary["std_regret"]
-        / np.sqrt(summary["n_users"])
-    )
-    summary["updates_ci95"] = (
-        1.96
-        * summary["std_updates"]
-        / np.sqrt(summary["n_users"])
-    )
+    summary["reward_ci95"] = (1.96 * summary["std_reward"] / np.sqrt(summary["n_users"]))
+    summary["regret_ci95"] = (1.96 * summary["std_regret"] / np.sqrt(summary["n_users"]))
+    summary["updates_ci95"] = (1.96 * summary["std_updates"] / np.sqrt(summary["n_users"]))
 
     order = [horizon_label(H) for H in PLANNING_HORIZONS]
     order_map = {label: i for i, label in enumerate(order)}
 
-    summary["sort_index"] = summary[
-        "planning_horizon"
-    ].map(order_map)
-
-    summary = (
-        summary
-        .sort_values("sort_index")
-        .drop(columns="sort_index")
-        .reset_index(drop=True)
-    )
-
-    summary_file = (
-        ABLATION_OUTPUT_DIR
-        / "planning_horizon_ablation_summary.csv"
-    )
-    summary.to_csv(summary_file, index=False)
+    summary["sort_index"] = summary["planning_horizon"].map(order_map)
+    summary = (summary.sort_values("sort_index").drop(columns="sort_index").reset_index(drop=True))
+    # summary_file = (ABLATION_OUTPUT_DIR / "planning_horizon_ablation_summary.csv")
+    # summary.to_csv(summary_file, index=False)
 
     print("\nPlanning-horizon ablation summary")
     print(summary.to_string(index=False))
 
     x = np.arange(len(summary))
+    fig, axes = plt.subplots(1, 2, figsize=(12, 4.5))
 
-    plt.figure(figsize=(8, 4.5))
-    plt.errorbar(
-        x,
-        summary["mean_regret"],
-        yerr=summary["regret_ci95"],
-        marker="o",
-        capsize=4,
-    )
-    plt.xticks(
-        x,
-        summary["planning_horizon"],
-    )
-    plt.xlabel("Planning Horizon")
-    plt.ylabel("Normalized Pseudo-Regret")
-    plt.title(
-        f"Planning-Horizon Ablation "
-        f"(T={ABLATION_T})"
-    )
-    plt.grid(axis="y", alpha=0.25)
-    plt.tight_layout()
+    axes[0].errorbar(x, summary["mean_regret"], yerr=summary["regret_ci95"], marker="o", capsize=4)
+    axes[0].set_xticks(x)
+    axes[0].set_xticklabels(summary["planning_horizon"])
+    axes[0].set_xlabel("Planning Horizon")
+    axes[0].set_ylabel("Normalized Pseudo-Regret")
+    axes[0].set_title("Normalized Pseudo-Regret")
+    axes[0].grid(axis="y", alpha=0.25)
 
-    regret_figure = (
-        ABLATION_OUTPUT_DIR
-        / "planning_horizon_ablation_regret.png"
-    )
-    plt.savefig(
-        regret_figure,
-        dpi=300,
-        bbox_inches="tight",
-    )
+    axes[1].errorbar(x, summary["mean_updates"], yerr=summary["updates_ci95"], marker="o", capsize=4)
+    axes[1].set_xticks(x)
+    axes[1].set_xticklabels(summary["planning_horizon"])
+    axes[1].set_xlabel("Planning Horizon")
+    axes[1].set_ylabel("Policy Updates")
+    axes[1].set_title("Policy Updates")
+    axes[1].grid(axis="y", alpha=0.25)
+
+    fig.suptitle(f"Planning-Horizon Ablation (T={ABLATION_T})")
+
+    plt.tight_layout(rect=[0, 0, 1, 0.93])
+
+    figure_file = (ABLATION_OUTPUT_DIR / "planning_horizon_ablation.png")
+    plt.savefig(figure_file, dpi=300, bbox_inches="tight")
     plt.close()
-
-    plt.figure(figsize=(8, 4.5))
-    plt.errorbar(
-        x,
-        summary["mean_updates"],
-        yerr=summary["updates_ci95"],
-        marker="o",
-        capsize=4,
-    )
-    plt.xticks(
-        x,
-        summary["planning_horizon"],
-    )
-    plt.xlabel("Planning Horizon")
-    plt.ylabel("Policy Updates")
-    plt.title(
-        f"Planning-Horizon Ablation: Updates "
-        f"(T={ABLATION_T})"
-    )
-    plt.grid(axis="y", alpha=0.25)
-    plt.tight_layout()
-
-    updates_figure = (
-        ABLATION_OUTPUT_DIR
-        / "planning_horizon_ablation_updates.png"
-    )
-    plt.savefig(
-        updates_figure,
-        dpi=300,
-        bbox_inches="tight",
-    )
-    plt.close()
-
-    print("\nSaved:")
-    print(results_file)
-    print(summary_file)
-    print(regret_figure)
-    print(updates_figure)
-
+    print("Saved:", figure_file)
 
 if __name__ == "__main__":
     run_ablation()
