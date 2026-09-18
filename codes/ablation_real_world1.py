@@ -19,10 +19,10 @@ K = len(top_categories)
 theta_norm_bound = np.sqrt(K)
 
 PLANNING_HORIZONS = [1, 2, 5, 10, "full"]
-ABLATION_T = 200
+ABLATION_T = 400 # 200
 WINDOW_SIZE = 4
-ABLATION_N_USERS = 100
-ABLATION_N_RUNS = 5
+ABLATION_N_USERS = 1 # 100
+ABLATION_N_RUNS = 1 # 5
 MAX_EXPOSURE = 1
 
 
