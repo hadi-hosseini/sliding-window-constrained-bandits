@@ -5,7 +5,6 @@ import matplotlib.pyplot as plt
 
 os.makedirs("imgs", exist_ok=True)
 
-
 COLORS = {
     "blue":   "#0072B2",
     "orange": "#E69F00",
@@ -23,7 +22,6 @@ def solve_offline_lp(T, w, solver="CLARABEL"):
 
     x = cp.Variable(T)
     constraints = [x >= 0, x <= 1]
-
     for t in range(w - 1, T):
         constraints.append(cp.sum(x[t - w + 1:t + 1]) <= w / 2)
 
@@ -38,8 +36,7 @@ def solve_offline_lp(T, w, solver="CLARABEL"):
     if problem.status not in [cp.OPTIMAL, cp.OPTIMAL_INACCURATE]:
         raise RuntimeError(
             f"Optimization failed for T={T}, w={w}. "
-            f"Status: {problem.status}"
-        )
+            f"Status: {problem.status}")
 
     return (float(problem.value), np.asarray(x.value).flatten())
 
@@ -220,75 +217,28 @@ def plot_geometry_experiment(results, w=32):
         pad=12
     )
 
-    ax2.set_xticks(
-        w_values
-    )
+    ax2.set_xticks(w_values)
+    ax2.tick_params(axis="x", rotation=45, labelsize=10)
+    ax2.tick_params(axis="y", labelsize=11)
 
-    ax2.tick_params(
-        axis="x",
-        rotation=45,
-        labelsize=10
-    )
+    ax2.grid(linestyle="--", linewidth=0.7, alpha=0.22)
+    ax2.legend(frameon=False, fontsize=10, loc="upper left")
 
-    ax2.tick_params(
-        axis="y",
-        labelsize=11
-    )
+    ax2.spines["top"].set_visible(False)
+    ax2.spines["right"].set_visible(False)
+    ax2.spines["left"].set_linewidth(0.8)
+    ax2.spines["bottom"].set_linewidth(0.8)
+    ax2.set_ylim(bottom=0)
 
-    ax2.grid(
-        linestyle="--",
-        linewidth=0.7,
-        alpha=0.22
-    )
-
-    ax2.legend(
-        frameon=False,
-        fontsize=10,
-        loc="upper left"
-    )
-
-    ax2.spines[
-        "top"
-    ].set_visible(False)
-
-    ax2.spines[
-        "right"
-    ].set_visible(False)
-
-    ax2.spines[
-        "left"
-    ].set_linewidth(0.8)
-
-    ax2.spines[
-        "bottom"
-    ].set_linewidth(0.8)
-
-    ax2.set_ylim(
-        bottom=0
-    )
-
-    fig.suptitle(
-        "Offline Geometry and Stationary Approximation Gap",
-        fontsize=15,
-        y=1.02
-    )
-
-    fig.tight_layout(
-        w_pad=3.0
-    )
-
-    fig.savefig(
-        "imgs/geometry.png",
-        dpi=300,
-        bbox_inches="tight"
-    )
+    fig.suptitle("Offline Geometry and Stationary Approximation Gap", fontsize=15, y=1.02)
+    fig.tight_layout(w_pad=3.0)
+    fig.savefig("imgs/geometry.png", dpi=300, bbox_inches="tight")
 
     plt.show()
     print("\nObserved vs. theoretical maximum gaps")
     print("-" * 60)
 
     for current_w, observed, theory in zip(w_values, max_gaps, theoretical_gaps):
-
         print(
             f"w={current_w:2d}, "
             f"observed={observed:6.4f}, "

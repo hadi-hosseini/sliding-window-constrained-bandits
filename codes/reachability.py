@@ -151,7 +151,6 @@ def run_rare_switching_oful(noise, rho, theta_star=THETA_STAR, w=W, lambda_reg=L
 
             determinant_condition = current_logdet <= episode_logdet + np.log(2.0) + 1e-12
             warmup_condition = episode == 1 and stationary_rounds < w - 1
-
             if not (determinant_condition or warmup_condition):
                 break
 

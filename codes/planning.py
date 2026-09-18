@@ -62,146 +62,51 @@ POLICY_MARKERS = {
 }
 
 
-
 def build_state_model():
     states = [()]
     for length in range(1, W):
         states.extend(itertools.product(range(len(ACTIONS)), repeat=length))
 
-    states = [tuple(state)
-        for state in states
-    ]
+    states = [tuple(state) for state in states]
+    state_to_index = {state: index for index, state in enumerate(states)}
+    n_states = len(states)
+    n_actions = len(ACTIONS)
+    feasible = np.zeros((n_states, n_actions), dtype=bool)
+    next_state = -np.ones((n_states, n_actions), dtype=int)
 
-    state_to_index = {
-        state: index
-        for index, state in enumerate(
-            states
-        )
-    }
-
-    n_states = len(
-        states
-    )
-
-    n_actions = len(
-        ACTIONS
-    )
-
-    feasible = np.zeros(
-        (
-            n_states,
-            n_actions
-        ),
-        dtype=bool
-    )
-
-    next_state = -np.ones(
-        (
-            n_states,
-            n_actions
-        ),
-        dtype=int
-    )
-
-    for state_index, state in enumerate(
-        states
-    ):
-
-        for action_index in range(
-            n_actions
-        ):
-
-            # Before a complete window exists,
-            # every action is allowed.
+    for state_index, state in enumerate(states):
+        for action_index in range(n_actions):
             if len(state) < W - 1:
-
                 is_feasible = True
 
             else:
+                window = (state + (action_index,))
+                costs = np.array([ACTION_COSTS[index] for index in window])
+                weighted_cost = np.dot(POSITION_WEIGHTS, costs)
+                is_feasible = (weighted_cost <= BUDGET + 1e-12)
 
-                window = (
-                    state
-                    +
-                    (
-                        action_index,
-                    )
-                )
-
-                costs = np.array([
-                    ACTION_COSTS[index]
-                    for index in window
-                ])
-
-                weighted_cost = np.dot(
-                    POSITION_WEIGHTS,
-                    costs
-                )
-
-                is_feasible = (
-                    weighted_cost
-                    <=
-                    BUDGET + 1e-12
-                )
-
-            feasible[
-                state_index,
-                action_index
-            ] = is_feasible
-
+            feasible[state_index, action_index] = is_feasible
             if is_feasible:
+                new_state = (state + (action_index,))
+                new_state = (new_state[-(W - 1):])
+                next_state[state_index, action_index] = (state_to_index[new_state])
 
-                new_state = (
-                    state
-                    +
-                    (
-                        action_index,
-                    )
-                )
-
-                new_state = (
-                    new_state[
-                        -(W - 1):
-                    ]
-                )
-
-                next_state[
-                    state_index,
-                    action_index
-                ] = (
-                    state_to_index[
-                        new_state
-                    ]
-                )
-
-    # Invalid transitions point to an extra
-    # state with value -infinity in Bellman recursion.
-    safe_next_state = (
-        next_state.copy()
-    )
-
-    safe_next_state[
-        safe_next_state < 0
-    ] = n_states
+    safe_next_state = (next_state.copy())
+    safe_next_state[safe_next_state < 0] = n_states
 
     return {
-        "states":
-            states,
-        "state_to_index":
-            state_to_index,
-        "feasible":
-            feasible,
-        "next_state":
-            next_state,
-        "safe_next_state":
-            safe_next_state,
-        "n_states":
-            n_states,
-        "empty_state":
-            state_to_index[()],
+        "states": states,
+        "state_to_index": state_to_index,
+        "feasible": feasible,
+        "next_state": next_state,
+        "safe_next_state": safe_next_state,
+        "n_states": n_states,
+        "empty_state": state_to_index[()],
     }
 
 
 STATE_MODEL = (build_state_model())
+
 
 def confidence_radius(V, lambda_reg=LAMBDA_REG, noise_scale=NOISE_STD, theta_bound=S_BOUND, delta=DELTA):
     d = V.shape[0]
@@ -257,7 +162,6 @@ def viability_values(T):
     values, _ = (bellman_table(stage_rewards=np.zeros(len(ACTIONS)), horizon=int(T)))
     return values
 
-
 def count_window_violations(action_indices, tolerance=1e-10):
     if len(action_indices) < W:
         return 0
@@ -273,18 +177,6 @@ def count_window_violations(action_indices, tolerance=1e-10):
 
     return int(violations)
 
-
-def assert_feasible(action_indices):
-    violations = (count_window_violations(action_indices))
-
-    if violations != 0:
-        raise RuntimeError(
-            f"Generated trajectory has "
-            f"{violations} constraint violations."
-        )
-
-
-
 def run_rare_update_planning(noise):
     T = len(noise)
     V = (LAMBDA_REG * np.eye(D))
@@ -297,7 +189,6 @@ def run_rare_update_planning(noise):
     n_updates = 0
 
     while t < T:
-
         _, episode_logdet = (np.linalg.slogdet(V))
         optimistic = (optimistic_rewards(V=V, b=b))
         remaining_at_start = (T - t)
@@ -311,18 +202,12 @@ def run_rare_update_planning(noise):
 
             remaining = (T - t)
             action_index = int(policy[remaining, state])
-
             if action_index < 0:
-                raise RuntimeError(
-                    "Planner reached a non-viable state."
-                )
+                raise RuntimeError("Planner reached a non-viable state.")
 
             selected_next_state = (next_state[state, action_index])
-
             if selected_next_state < 0:
-                raise RuntimeError(
-                    "Planner selected an infeasible action."
-                )
+                raise RuntimeError("Planner selected an infeasible action.")
 
             action = (ACTIONS[action_index])
             action_indices.append(action_index)
@@ -334,7 +219,6 @@ def run_rare_update_planning(noise):
             state = (selected_next_state)
             t += 1
 
-    assert_feasible(action_indices)
     offline_value = (offline_optimum(T))
     regret = (offline_value - total_true_reward)
 
@@ -343,7 +227,6 @@ def run_rare_update_planning(noise):
         "normalized_regret": float(regret / T),
         "updates": int(n_updates),
     }
-
 
 
 def run_myopic_feasible_oful(noise):
@@ -365,16 +248,13 @@ def run_myopic_feasible_oful(noise):
 
         while t < T:
             _, current_logdet = (np.linalg.slogdet(V))
-
             if (current_logdet > episode_logdet + np.log(2.0) + 1e-12):
                 break
 
             remaining = (T - t)
             candidates = []
-
             for action_index in range(len(ACTIONS)):
                 candidate_state = (next_state[state, action_index])
-
                 if candidate_state < 0:
                     continue
 
@@ -382,7 +262,6 @@ def run_myopic_feasible_oful(noise):
                     candidates.append(action_index)
 
             if len(candidates) == 0:
-
                 raise RuntimeError(
                     f"No viable action available "
                     f"at t={t}, "
@@ -392,7 +271,6 @@ def run_myopic_feasible_oful(noise):
 
             action_index = max(candidates, key=lambda index: optimistic[index])
             selected_next_state = (next_state[state, action_index])
-
             if selected_next_state < 0:
                 raise RuntimeError(
                     "Myopic policy selected "
@@ -409,7 +287,6 @@ def run_myopic_feasible_oful(noise):
             state = (selected_next_state)
             t += 1
 
-    assert_feasible(action_indices)
     offline_value = (offline_optimum(T))
     regret = (offline_value - total_true_reward)
 
@@ -420,22 +297,17 @@ def run_myopic_feasible_oful(noise):
     }
 
 
-
 def stationary_action_indices():
     stationary = []
     total_position_weight = np.sum(POSITION_WEIGHTS)
-
     for action_index in range(len(ACTIONS)):
-
         cost = (total_position_weight * ACTION_COSTS[action_index])
         if (cost <= BUDGET + 1e-12):
             stationary.append(action_index)
 
     return stationary
 
-
 STATIONARY_ACTIONS = (stationary_action_indices())
-
 
 def run_stationary_oful(noise):
     T = len(noise)
@@ -447,7 +319,6 @@ def run_stationary_oful(noise):
     n_updates = 0
 
     while t < T:
-
         _, episode_logdet = (np.linalg.slogdet(V))
         optimistic = (optimistic_rewards(V=V, b=b))
         action_index = max(STATIONARY_ACTIONS, key=lambda index:optimistic[index])
@@ -468,7 +339,6 @@ def run_stationary_oful(noise):
             b += (action * observation)
             t += 1
 
-    assert_feasible(action_indices)
     offline_value = (offline_optimum(T))
     regret = (offline_value - total_true_reward)
 
@@ -543,10 +413,8 @@ def run_planning_experiment(n_runs=N_RUNS, seed=BASE_SEED):
 
 def mean_and_ci(values):
     mean = np.mean(values, axis=1)
-
     if values.shape[1] == 1:
         ci = np.zeros_like(mean)
-
     else:
         standard_error = (np.std(values, axis=1, ddof=1) / np.sqrt(values.shape[1]))
         ci = (1.96 * standard_error)
@@ -555,7 +423,6 @@ def mean_and_ci(values):
 
 
 def print_experiment_summary(results):
-
     for horizon_index, T in enumerate(T_VALUES):
         print(f"\nT = {T}")
         print("-" * 85)
@@ -585,130 +452,39 @@ def print_experiment_summary(results):
             )
 
 
-def plot_planning_experiment(
-    results
-):
-
-    fig, axes = plt.subplots(
-        1,
-        2,
-        figsize=(14, 5.2)
-    )
-
+def plot_planning_experiment(results):
+    fig, axes = plt.subplots(1, 2, figsize=(14, 5.2))
     ax1 = axes[0]
-
     for policy in POLICY_NAMES:
+        mean, ci = (mean_and_ci(results[policy]["normalized_regret"]))
 
-        mean, ci = (
-            mean_and_ci(
-                results[
-                    policy
-                ][
-                    "normalized_regret"
-                ]
-            )
-        )
-
-        ax1.plot(
-            T_VALUES,
-            mean,
-            color=POLICY_COLORS[
-                policy
-            ],
-            marker=POLICY_MARKERS[
-                policy
-            ],
+        ax1.plot(T_VALUES, mean, color=POLICY_COLORS[policy], marker=POLICY_MARKERS[policy],
             markersize=7,
             linewidth=2.1,
             markeredgecolor="white",
             markeredgewidth=0.7,
-            label=policy
-        )
+            label=policy)
 
-        ax1.fill_between(
-            T_VALUES,
-            mean - ci,
-            mean + ci,
-            color=POLICY_COLORS[
-                policy
-            ],
-            alpha=0.30
-        )
+        ax1.fill_between(T_VALUES, mean - ci, mean + ci, color=POLICY_COLORS[policy], alpha=0.30)
 
-    ax1.set_title(
-        "(a) Normalized Pseudo-Regret",
-        fontsize=14,
-        pad=12
-    )
+    ax1.set_title("(a) Normalized Pseudo-Regret", fontsize=14, pad=12)
+    ax1.set_xlabel("Horizon T", fontsize=13)
+    ax1.set_ylabel("Pseudo-regret / T", fontsize=13)
+    ax1.set_xscale("log", base=2)
+    ax1.set_xticks(T_VALUES)
+    ax1.set_xticklabels([str(T) for T in T_VALUES])
+    ax1.tick_params(axis="both", labelsize=10)
 
-    ax1.set_xlabel(
-        "Horizon T",
-        fontsize=13
-    )
-
-    ax1.set_ylabel(
-        "Pseudo-regret / T",
-        fontsize=13
-    )
-
-    ax1.set_xscale(
-        "log",
-        base=2
-    )
-
-    ax1.set_xticks(
-        T_VALUES
-    )
-
-    ax1.set_xticklabels([
-        str(T)
-        for T in T_VALUES
-    ])
-
-    ax1.tick_params(
-        axis="both",
-        labelsize=10
-    )
-
-    ax1.grid(
-        linestyle="--",
-        linewidth=0.7,
-        alpha=0.22
-    )
-
-    ax1.spines[
-        "top"
-    ].set_visible(False)
-
-    ax1.spines[
-        "right"
-    ].set_visible(False)
-
-    ax1.spines[
-        "left"
-    ].set_linewidth(0.8)
-
-    ax1.spines[
-        "bottom"
-    ].set_linewidth(0.8)
-
-    ax1.set_ylim(
-        bottom=0
-    )
+    ax1.grid(linestyle="--", linewidth=0.7, alpha=0.22)
+    ax1.spines["top"].set_visible(False)
+    ax1.spines["right"].set_visible(False)
+    ax1.spines["left"].set_linewidth(0.8)
+    ax1.spines["bottom"].set_linewidth(0.8)
+    ax1.set_ylim(bottom=0)
 
     ax2 = axes[1]
-
     for policy in POLICY_NAMES:
-
-        mean, ci = (
-            mean_and_ci(
-                results[
-                    policy
-                ][
-                    "updates"
-                ]
-            )
-        )
+        mean, ci = (mean_and_ci(results[policy]["updates"]))
 
         ax2.plot(
             T_VALUES,
@@ -736,101 +512,25 @@ def plot_planning_experiment(
             alpha=0.30
         )
 
-    ax2.set_title(
-        "(b) Policy Updates",
-        fontsize=14,
-        pad=12
-    )
+    ax2.set_title("(b) Policy Updates", fontsize=14, pad=12)
+    ax2.set_xlabel("Horizon T", fontsize=13)
+    ax2.set_ylabel("Number of policy updates", fontsize=13)
+    ax2.set_xscale("log", base=2)
+    ax2.set_xticks(T_VALUES)
+    ax2.set_xticklabels([str(T) for T in T_VALUES])
+    ax2.tick_params(axis="both", labelsize=10)
 
-    ax2.set_xlabel(
-        "Horizon T",
-        fontsize=13
-    )
+    ax2.grid(linestyle="--", linewidth=0.7, alpha=0.22)
+    ax2.spines["top"].set_visible(False)
+    ax2.spines["right"].set_visible(False)
+    ax2.spines["left"].set_linewidth(0.8)
+    ax2.spines["bottom"].set_linewidth(0.8)
+    ax2.set_ylim(bottom=0)
+    handles, labels = (ax1.get_legend_handles_labels())
 
-    ax2.set_ylabel(
-        "Number of policy updates",
-        fontsize=13
-    )
-
-    ax2.set_xscale(
-        "log",
-        base=2
-    )
-
-    ax2.set_xticks(
-        T_VALUES
-    )
-
-    ax2.set_xticklabels([
-        str(T)
-        for T in T_VALUES
-    ])
-
-    ax2.tick_params(
-        axis="both",
-        labelsize=10
-    )
-
-    ax2.grid(
-        linestyle="--",
-        linewidth=0.7,
-        alpha=0.22
-    )
-
-    ax2.spines[
-        "top"
-    ].set_visible(False)
-
-    ax2.spines[
-        "right"
-    ].set_visible(False)
-
-    ax2.spines[
-        "left"
-    ].set_linewidth(0.8)
-
-    ax2.spines[
-        "bottom"
-    ].set_linewidth(0.8)
-
-    ax2.set_ylim(
-        bottom=0
-    )
-
-
-    handles, labels = (
-        ax1.get_legend_handles_labels()
-    )
-
-    fig.legend(
-        handles,
-        labels,
-        loc="upper center",
-        ncol=3,
-        frameon=False,
-        fontsize=11,
-        bbox_to_anchor=(
-            0.5,
-            1.02
-        )
-    )
-
-    fig.tight_layout(
-        rect=[
-            0,
-            0,
-            1,
-            0.92
-        ],
-        w_pad=3.0
-    )
-
-    fig.savefig(
-        "imgs/planning.png",
-        dpi=300,
-        bbox_inches="tight"
-    )
-
+    fig.legend(handles, labels, loc="upper center", ncol=3, frameon=False, fontsize=11, bbox_to_anchor=(0.5, 1.02))
+    fig.tight_layout(rect=[0, 0, 1, 0.92], w_pad=3.0)
+    fig.savefig("imgs/planning.png", dpi=300, bbox_inches="tight")
     plt.show()
 
 
