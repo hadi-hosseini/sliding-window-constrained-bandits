@@ -3,7 +3,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from tqdm import tqdm
 
-from rare_switching import (THETA_STAR, W, T, RHO, NOISE_STD, run_rare_switching_oful)
+from codes.rare_switching import (THETA_STAR, W, T, RHO, NOISE_STD, run_rare_switching_oful)
 
 os.makedirs("imgs", exist_ok=True)
 

@@ -27,7 +27,6 @@ SEED = 42
 def mean_and_ci(values):
     values = np.asarray(values, dtype=float)
     mean = np.mean(values)
-
     if len(values) <= 1:
         return mean, 0.0
 
@@ -73,7 +72,6 @@ def print_results(results):
 def collect_plot_data(results, metric):
     means = []
     cis = []
-
     for alpha in ALPHA_VALUES:
         mean, ci = mean_and_ci(results[alpha][metric])
         means.append(mean)
@@ -83,155 +81,43 @@ def collect_plot_data(results, metric):
 
 
 def format_axis(ax):
-    ax.grid(
-        axis="y",
-        linestyle="--",
-        linewidth=0.7,
-        alpha=0.22,
-    )
-
+    ax.grid(axis="y", linestyle="--", linewidth=0.7, alpha=0.22)
     ax.spines["top"].set_visible(False)
     ax.spines["right"].set_visible(False)
-
-    ax.tick_params(
-        axis="both",
-        labelsize=10,
-    )
-
+    ax.tick_params(axis="both", labelsize=10)
     ax.set_axisbelow(True)
 
-
-def plot_metric(
-    ax,
-    x,
-    means,
-    cis,
-    color,
-    title,
-    ylabel,
-):
-    ax.fill_between(
-        x,
-        means - cis,
-        means + cis,
-        color=color,
-        alpha=0.15,
-        linewidth=0,
-    )
-
-    ax.plot(
-        x,
-        means,
-        color=color,
-        marker="o",
-        markersize=7,
-        linewidth=2.2,
-        markeredgecolor="white",
-        markeredgewidth=0.8,
-    )
-
-    ax.set_title(
-        title,
-        fontsize=12,
-        pad=9,
-    )
-
-    ax.set_xlabel(
-        r"Switching threshold $\alpha$",
-        fontsize=11,
-    )
-
-    ax.set_ylabel(
-        ylabel,
-        fontsize=11,
-    )
-
+def plot_metric(ax, x, means, cis, color, title, ylabel):
+    ax.fill_between(x, means - cis, means + cis, color=color, alpha=0.15, linewidth=0)
+    ax.plot(x, means, color=color, marker="o", markersize=7, linewidth=2.2, markeredgecolor="white", markeredgewidth=0.8)
+    ax.set_title(title, fontsize=12, pad=9)
+    ax.set_xlabel(r"Switching threshold $\alpha$", fontsize=11)
+    ax.set_ylabel(ylabel, fontsize=11)
     ax.set_xticks(x)
-    ax.set_xticklabels(
-        ["1.25", "1.5", "2", "4", "8"]
-    )
-
-    ax.set_xlim(
-        -0.35,
-        len(ALPHA_VALUES) - 0.65,
-    )
+    ax.set_xticklabels(["1.25", "1.5", "2", "4", "8"])
+    ax.set_xlim(-0.35, len(ALPHA_VALUES) - 0.65)
 
     y_min = np.min(means - cis)
     y_max = np.max(means + cis)
     y_range = max(y_max - y_min, 1.0)
 
-    ax.set_ylim(
-        max(0.0, y_min - 0.08 * y_range),
-        y_max + 0.10 * y_range,
-    )
-
+    ax.set_ylim(max(0.0, y_min - 0.08 * y_range), y_max + 0.10 * y_range)
     format_axis(ax)
-
 
 def plot_results(results):
     x = np.arange(len(ALPHA_VALUES))
 
-    regret_means, regret_cis = collect_plot_data(
-        results,
-        "regret",
-    )
+    regret_means, regret_cis = collect_plot_data(results, "regret")
+    switch_means, switch_cis = collect_plot_data(results, "switches")
+    transition_means, transition_cis = collect_plot_data(results, "transition_rounds")
+    fig, axes = plt.subplots(1, 3, figsize=(12.5, 3.7))
 
-    switch_means, switch_cis = collect_plot_data(
-        results,
-        "switches",
-    )
+    plot_metric(ax=axes[0], x=x, means=regret_means, cis=regret_cis, color=COLORS["blue"], title="(a) Pseudo-Regret", ylabel="Pseudo-regret")
+    plot_metric(ax=axes[1], x=x, means=switch_means, cis=switch_cis, color=COLORS["orange"], title="(b) Target Switches", ylabel="Number of target switches")
+    plot_metric(ax=axes[2], x=x, means=transition_means, cis=transition_cis, color=COLORS["green"], title="(c) Transition Rounds", ylabel="Transition rounds")
 
-    transition_means, transition_cis = collect_plot_data(
-        results,
-        "transition_rounds",
-    )
-
-    fig, axes = plt.subplots(
-        1,
-        3,
-        figsize=(12.5, 3.7),
-    )
-
-    plot_metric(
-        ax=axes[0],
-        x=x,
-        means=regret_means,
-        cis=regret_cis,
-        color=COLORS["blue"],
-        title="(a) Pseudo-Regret",
-        ylabel="Pseudo-regret",
-    )
-
-    plot_metric(
-        ax=axes[1],
-        x=x,
-        means=switch_means,
-        cis=switch_cis,
-        color=COLORS["orange"],
-        title="(b) Target Switches",
-        ylabel="Number of target switches",
-    )
-
-    plot_metric(
-        ax=axes[2],
-        x=x,
-        means=transition_means,
-        cis=transition_cis,
-        color=COLORS["green"],
-        title="(c) Transition Rounds",
-        ylabel="Transition rounds",
-    )
-
-    fig.tight_layout(
-        w_pad=2.5
-    )
-
-    fig.savefig(
-        "imgs/ablation1.png",
-        dpi=300,
-        bbox_inches="tight",
-    )
-
+    fig.tight_layout(w_pad=2.5)
+    fig.savefig("imgs/ablation1.png", dpi=300, bbox_inches="tight")
     plt.show()
 
 

@@ -89,9 +89,7 @@ def build_state_model():
         "empty_state": state_to_index[()],
     }
 
-
 STATE_MODEL = (build_state_model())
-
 
 def build_viability_masks():
     n_states = (STATE_MODEL["n_states"])
@@ -122,7 +120,6 @@ def build_viability_masks():
     return (masks, stable_from, stable_mask)
 
 (VIABILITY_MASKS, STABLE_FROM, STABLE_VIABILITY) = build_viability_masks()
-
 
 def viability_mask(remaining):
 

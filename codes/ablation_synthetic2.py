@@ -211,24 +211,12 @@ def plot_results(results):
 
     regret_means, regret_cis = collect_plot_data(results, "regret")
     switch_means, switch_cis = collect_plot_data(results, "switches")
-    transition_means, transition_cis = collect_plot_data(
-        results, "transition_rounds"
-    )
+    transition_means, transition_cis = collect_plot_data(results, "transition_rounds")
 
     fig, axes = plt.subplots(1, 3, figsize=(11.8, 3.6))
-
-    plot_metric(
-        axes[0], x, regret_means, regret_cis,
-        "(a) Pseudo-Regret", "Pseudo-regret", COLORS["blue"]
-    )
-    plot_metric(
-        axes[1], x, switch_means, switch_cis,
-        "(b) Target Switches", "Target switches", COLORS["orange"]
-    )
-    plot_metric(
-        axes[2], x, transition_means, transition_cis,
-        "(c) Transition Rounds", "Transition rounds", COLORS["green"]
-    )
+    plot_metric(axes[0], x, regret_means, regret_cis, "(a) Pseudo-Regret", "Pseudo-regret", COLORS["blue"])
+    plot_metric(axes[1], x, switch_means, switch_cis, "(b) Target Switches", "Target switches", COLORS["orange"])
+    plot_metric(axes[2], x, transition_means, transition_cis, "(c) Transition Rounds", "Transition rounds", COLORS["green"])
 
     fig.tight_layout(w_pad=2.2)
     fig.savefig("imgs/ablation2.png", dpi=300, bbox_inches="tight")

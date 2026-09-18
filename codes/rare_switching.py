@@ -9,7 +9,6 @@ LAMBDA_REG = 1.0
 DELTA = 0.05
 S_BOUND = np.linalg.norm(THETA_STAR)
 
-
 def confidence_radius(V, lambda_reg=LAMBDA_REG, noise_scale=NOISE_STD, theta_bound=S_BOUND, delta=DELTA):
     d = V.shape[0]
     sign, logdet_v = np.linalg.slogdet(V)
