@@ -154,8 +154,6 @@ class OFULPolicy:
         self.model.update(x, reward)
 
 
-
-
 class RareUpdateOptimisticPlanning:
     def __init__(self, config, d, budget, models, features, cost_table, seed=0):
         self.model = OptimisticLinearBandit(config=config, d=d)
@@ -340,7 +338,7 @@ def run_policy(policy_name, T, seed, budget):
     env = LLMRoutingEnvironment(query_order=query_order, budget=budget, config=config)
     offline_optimal = compute_offline_optimal_reward(query_order=query_order, T=T, budget=budget, config=config)
 
-    if policy_name == "Rare-Update Optimistic Planning":
+    if policy_name == "Myopic Rare-Update Optimistic Planning":
         agent = RareUpdateOptimisticPlanning(config=config, d=d, budget=budget, models=models, features=features, cost_table=cost_table, seed=seed)
 
     elif policy_name == "Myopic Feasible OFUL":
@@ -357,7 +355,7 @@ def run_policy(policy_name, T, seed, budget):
     for t in range(T):
         q = query_order[t]
 
-        if policy_name == "Rare-Update Optimistic Planning":
+        if policy_name == "Myopic Rare-Update Optimistic Planning":
             queries = tuple(query_order[t:min(T, t + config.planning_horizon)])
             action = agent.choose(state=state, queries=queries, t=t, T=T)
         else:
@@ -382,7 +380,7 @@ def run_policy(policy_name, T, seed, budget):
             else:
                 agent.update(x, reward)
 
-        if policy_name == "Rare-Update Optimistic Planning":
+        if policy_name == "Myopic Rare-Update Optimistic Planning":
             if action is None:
                 state = agent.transition(state, 0.0)
             else:
