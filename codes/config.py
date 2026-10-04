@@ -63,7 +63,7 @@ class LLMRouterConfig:
 
     # Experiment parameters
     t_values: tuple[int, ...] = (500, 2500, 5000)
-    # t_values: tuple[int, ...] = (5000,)
+    # t_values: tuple[int, ...] = (500,)
     n_runs: int = 10
     random_seed: int = 42
 

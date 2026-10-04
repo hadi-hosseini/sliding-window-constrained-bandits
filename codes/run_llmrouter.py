@@ -38,9 +38,11 @@ def compute_offline_optimal_reward(query_order, T, budget, config):
         new_dp = {}
 
         for history, total_reward in dp.items():
+
             for model in models:
                 cost = cost_table[(q, model)]
                 reward = reward_table[(q, model)]
+
                 new_history = history + (cost,)
 
                 if len(new_history) >= window_size:
@@ -55,9 +57,28 @@ def compute_offline_optimal_reward(query_order, T, budget, config):
                 if (new_history not in new_dp or new_reward > new_dp[new_history]):
                     new_dp[new_history] = new_reward
 
-        dp = new_dp
-    return max(dp.values())
+            cost = 0.0
+            reward = 0.0
 
+            new_history = history + (cost,)
+
+            if len(new_history) >= window_size:
+                window_cost = sum(new_history[-window_size:])
+
+                if window_cost <= budget:
+                    new_history = new_history[-(window_size - 1):]
+
+                    if (new_history not in new_dp or total_reward > new_dp[new_history]):
+                        new_dp[new_history] = total_reward
+            else:
+                new_history = new_history[-(window_size - 1):]
+
+                if (new_history not in new_dp or total_reward > new_dp[new_history]):
+                    new_dp[new_history] = total_reward
+
+        dp = new_dp
+
+    return max(dp.values())
 
 class LLMRoutingEnvironment:
     def __init__(self, query_order, budget, config):
@@ -275,7 +296,6 @@ class RareUpdateOptimisticPlanning:
             self.model.update(x, y)
 
 
-
 class PrimalDualOFUL:
 
     def __init__(self, budget, config, d, models, features, cost_table, seed=0):
@@ -365,9 +385,9 @@ def run_policy(policy_name, T, seed, budget):
                 actions = env.feasible_actions(t)
 
             if len(actions) == 0:
-                continue
-
-            action = agent.choose(actions, q)
+                action = None
+            else:
+                action = agent.choose(actions, q)
 
         reward = env.step(t, action)
         x = None
