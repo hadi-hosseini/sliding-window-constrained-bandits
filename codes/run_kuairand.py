@@ -248,14 +248,17 @@ class OFULPolicy:
 
 
 class PrimalDualOFUL:
+
     def __init__(self, K, config, theta_norm_bound=None, seed=0):
         self.K = K
         self.w = config.window_size
         self.c = config.max_exposure
         self.eta = config.dual_eta
+
         self.rng = np.random.default_rng(seed)
         self.model = OptimisticLinearBandit(K=K, config=config, theta_norm_bound=theta_norm_bound)
-        self.lambda_dual = 0.0
+        self.lambda_dual = np.zeros(K, dtype=float)
+
         self.history = []
         self.n_updates = 0
         self.t = 0
@@ -267,16 +270,7 @@ class PrimalDualOFUL:
             return None
 
         scores = self.model.optimistic_scores()
-        recent_history = self.history[-(self.w - 1):]
-        counts = Counter(recent_history)
-        lagrangian_scores = np.empty(len(actions), dtype=float)
-
-        for i, action in enumerate(actions):
-            action = int(action)
-            current_count = counts.get(action, 0) + 1
-            predicted_violation = max(0, current_count - self.c)
-            lagrangian_scores[i] = scores[action] - self.lambda_dual * predicted_violation
-
+        lagrangian_scores = np.array([scores[int(action)] - self.lambda_dual[int(action)] for action in actions], dtype=float)
         max_score = np.max(lagrangian_scores)
         candidates = actions[np.isclose(lagrangian_scores, max_score)]
         self.n_updates += 1
@@ -292,12 +286,11 @@ class PrimalDualOFUL:
 
         if len(self.history) >= self.w:
             window = self.history[-self.w:]
-            counts = Counter(window)
-            max_count = max(counts.values())
-            violation = max(0, max_count - self.c)
+            counts = np.bincount(window, minlength=self.K)
             self.t += 1
             eta_t = self.eta / np.sqrt(self.t)
-            self.lambda_dual = max(0.0, self.lambda_dual + eta_t * violation)
+            residual = counts.astype(float) - self.c
+            self.lambda_dual = np.maximum(0.0, self.lambda_dual + eta_t * residual)
 
 
 def run_policy(theta_star, policy_name, T, seed, config):

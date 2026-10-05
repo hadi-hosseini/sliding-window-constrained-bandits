@@ -7,7 +7,7 @@ from scipy.stats import t
 
 RESULT_FILE = Path("./llmrouter_results/experiment_results_budget.csv")
 BUDGET = 0.4
-POLICIES = ["Rare-Update Optimistic Planning", "Myopic Feasible OFUL", "Unconstrained OFUL", "Primal-Dual OFUL"]
+POLICIES = ["Myopic Rare-Update Optimistic Planning", "Myopic Feasible OFUL", "Unconstrained OFUL", "Primal-Dual OFUL"]
 
 df = pd.read_csv(RESULT_FILE)
 df.columns = [column.replace("**", "").replace("\\_", "_").strip() for column in df.columns]

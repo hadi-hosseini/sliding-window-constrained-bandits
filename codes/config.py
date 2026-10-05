@@ -11,7 +11,7 @@ class KuaiRandConfig:
     # Policies
     policies: tuple[str, ...] = ("Rare-Update Optimistic Planning", "Myopic Feasible OFUL", "Primal-Dual OFUL", "Unconstrained OFUL")
     # policies: tuple[str, ...] = ("Rare-Update Optimistic Planning", "Myopic Feasible OFUL", "Unconstrained OFUL")
-    # policies: tuple[str, ...] = ("Rare-Update Optimistic Planning",)
+    # policies: tuple[str, ...] = ( "Primal-Dual OFUL",)
 
 
     # Sliding-window constraint
@@ -20,7 +20,7 @@ class KuaiRandConfig:
 
     # Experiment Parameters
     t_values: tuple[int, ...] = (500, 2500, 5000)
-    n_users: int = 100 # 100
+    n_users: int = 100
     n_runs: int = 10
     min_category_interactions: int = 50
     random_seed: int = 42
